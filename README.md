@@ -271,7 +271,7 @@ budget_ceiling: 50.00
 
 ### Bundled Tools
 
-GSD ships with 11 extensions, all loaded automatically:
+GSD ships with 9 extensions, all loaded automatically:
 
 | Extension | What it provides |
 |-----------|-----------------|
@@ -281,9 +281,7 @@ GSD ships with 11 extensions, all loaded automatically:
 | **Context7** | Up-to-date library/framework documentation |
 | **Background Shell** | Long-running process management with readiness detection |
 | **Subagent** | Delegated tasks with isolated context windows |
-| **Plan Mode** | Structured planning before execution |
 | **Slash Commands** | Custom command creation |
-| **Worktree** | Git worktree management |
 | **Ask User Questions** | Structured user input with single/multi-select |
 | **Secure Env Collect** | Masked secret collection without manual .env editing |
 

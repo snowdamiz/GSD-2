@@ -103,8 +103,6 @@ test("loader sets all 4 GSD_ env vars and PI_PACKAGE_DIR", async () => {
     "'search-the-web'",
     "'slash-commands'",
     "'subagent'",
-    "'worktree'",
-    "'plan-mode'",
     "'ask-user-questions.ts'",
     "'get-secrets-from-user.ts'",
   ];

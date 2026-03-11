@@ -67,8 +67,6 @@ process.env.GSD_BUNDLED_EXTENSION_PATHS = [
   join(agentDir, 'extensions', 'search-the-web', 'index.ts'),
   join(agentDir, 'extensions', 'slash-commands', 'index.ts'),
   join(agentDir, 'extensions', 'subagent', 'index.ts'),
-  join(agentDir, 'extensions', 'worktree', 'index.ts'),
-  join(agentDir, 'extensions', 'plan-mode', 'index.ts'),
   join(agentDir, 'extensions', 'ask-user-questions.ts'),
   join(agentDir, 'extensions', 'get-secrets-from-user.ts'),
 ].join(':')
