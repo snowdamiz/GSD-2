@@ -9,7 +9,7 @@ import {
   resolveTasksDir,
 } from "./paths.js";
 import { deriveState } from "./state.js";
-import { milestoneIdSort, findMilestoneIds } from "./guided-flow.js";
+import { milestoneIdSort, findMilestoneIds } from "./milestone-id-utils.js";
 import { type ValidationIssue, validateCompleteBoundary, validatePlanBoundary } from "./observability-validator.js";
 import { getSliceBranchName, detectWorktreeName } from "./worktree.js";
 

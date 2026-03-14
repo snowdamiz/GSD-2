@@ -6,7 +6,7 @@
 import { promises as fs } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { resolveMilestoneFile, relMilestoneFile } from './paths.js';
-import { milestoneIdSort, findMilestoneIds } from './guided-flow.js';
+import { milestoneIdSort, findMilestoneIds } from './milestone-id-utils.js';
 
 import type {
   Roadmap, BoundaryMapEntry,
@@ -18,7 +18,7 @@ import type {
   ManifestStatus,
 } from './types.js';
 
-import { checkExistingEnvKeys } from '../get-secrets-from-user.js';
+import { checkExistingEnvKeys } from '../env-key-utils.js';
 import { parseRoadmapSlices } from './roadmap-slices.js';
 import { nativeParseRoadmap, nativeExtractSection, NATIVE_UNAVAILABLE } from './native-parser-bridge.js';
 

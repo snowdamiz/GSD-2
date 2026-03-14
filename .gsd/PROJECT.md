@@ -11,10 +11,10 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 ## Current State
 
 - Core GSD CLI, TUI, onboarding, and RPC mode already exist in this repo.
-- `src/cli.ts` is the main CLI entrypoint; normal interactive mode currently opens the TUI.
-- `packages/pi-coding-agent` already exposes RPC mode and an RPC client.
-- `web/` is the in-repo Next.js UI skin with dashboard, terminal, power, roadmap, files, and activity views; it was imported from the prototype and is still mock/static until wired to GSD.
-- No `--web` launch path or browser workspace exists yet.
+- `src/cli.ts` now has a real `--web` launch path that starts browser mode for the current cwd without opening the TUI.
+- `src/web/bridge-service.ts` plus `web/app/api/boot|session/command|session/events` now expose a live same-origin browser bridge backed by real GSD session state.
+- `web/` is still the preserved Next.js skin, but the launch-critical shell surfaces now hydrate from live boot/SSE state instead of startup mocks.
+- S01 is complete; S02 (first-run setup wizard) is next.
 
 ## Architecture / Key Patterns
 

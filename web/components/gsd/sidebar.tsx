@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   ChevronRight,
   ChevronDown,
@@ -13,113 +13,26 @@ import {
   Settings,
   Terminal,
   LayoutDashboard,
-  Map,
+  Map as MapIcon,
   Activity,
   Columns2,
+  AlertTriangle,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
+import {
+  getCurrentScopeLabel,
+  getProjectDisplayName,
+  getSessionLabelFromBridge,
+  shortenPath,
+  useGSDWorkspaceState,
+  type WorkspaceMilestoneTarget,
+  type WorkspaceSliceTarget,
+  type WorkspaceTaskTarget,
+} from "@/lib/gsd-workspace-store"
 
-interface Task {
-  id: string
-  name: string
-  status: "done" | "in-progress" | "pending"
-}
+type ItemStatus = "done" | "in-progress" | "pending"
 
-interface Slice {
-  id: string
-  name: string
-  status: "done" | "in-progress" | "pending"
-  tasks: Task[]
-}
-
-interface Milestone {
-  id: string
-  name: string
-  status: "done" | "in-progress" | "pending"
-  slices: Slice[]
-}
-
-const mockMilestones: Milestone[] = [
-  {
-    id: "M001",
-    name: "Core Infrastructure",
-    status: "done",
-    slices: [
-      {
-        id: "S01",
-        name: "Data Model & Types",
-        status: "done",
-        tasks: [
-          { id: "T01", name: "Core types and interfaces", status: "done" },
-          { id: "T02", name: "Markdown parser for plan files", status: "done" },
-          { id: "T03", name: "File writer with round-trip fidelity", status: "done" },
-        ],
-      },
-      {
-        id: "S02",
-        name: "API Endpoints",
-        status: "done",
-        tasks: [
-          { id: "T01", name: "REST endpoint setup", status: "done" },
-          { id: "T02", name: "Middleware configuration", status: "done" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "M002",
-    name: "Auto Mode Engine",
-    status: "in-progress",
-    slices: [
-      {
-        id: "S01",
-        name: "State Machine",
-        status: "done",
-        tasks: [
-          { id: "T01", name: "State reader implementation", status: "done" },
-          { id: "T02", name: "Transition handlers", status: "done" },
-        ],
-      },
-      {
-        id: "S02",
-        name: "Context Injection",
-        status: "in-progress",
-        tasks: [
-          { id: "T01", name: "Pre-load context files", status: "done" },
-          { id: "T02", name: "Dispatch prompt builder", status: "in-progress" },
-          { id: "T03", name: "Summary aggregation", status: "pending" },
-        ],
-      },
-      {
-        id: "S03",
-        name: "Crash Recovery",
-        status: "pending",
-        tasks: [
-          { id: "T01", name: "Lock file management", status: "pending" },
-          { id: "T02", name: "Session forensics", status: "pending" },
-        ],
-      },
-    ],
-  },
-  {
-    id: "M003",
-    name: "Dashboard & Observability",
-    status: "pending",
-    slices: [
-      {
-        id: "S01",
-        name: "Cost Tracking",
-        status: "pending",
-        tasks: [
-          { id: "T01", name: "Token counter", status: "pending" },
-          { id: "T02", name: "Cost ledger", status: "pending" },
-        ],
-      },
-    ],
-  },
-]
-
-const StatusIcon = ({ status }: { status: "done" | "in-progress" | "pending" }) => {
+const StatusIcon = ({ status }: { status: ItemStatus }) => {
   if (status === "done") {
     return <CheckCircle2 className="h-3.5 w-3.5 text-foreground/70" />
   }
@@ -134,35 +47,92 @@ interface SidebarProps {
   onViewChange: (view: string) => void
 }
 
+function getSliceStatus(
+  milestoneId: string,
+  slice: WorkspaceSliceTarget,
+  active: { milestoneId?: string; sliceId?: string },
+): ItemStatus {
+  if (slice.done) return "done"
+  if (active.milestoneId === milestoneId && active.sliceId === slice.id) return "in-progress"
+  return "pending"
+}
+
+function getTaskStatus(
+  milestoneId: string,
+  sliceId: string,
+  task: WorkspaceTaskTarget,
+  active: { milestoneId?: string; sliceId?: string; taskId?: string },
+): ItemStatus {
+  if (task.done) return "done"
+  if (active.milestoneId === milestoneId && active.sliceId === sliceId && active.taskId === task.id) return "in-progress"
+  return "pending"
+}
+
+function getMilestoneStatus(
+  milestone: WorkspaceMilestoneTarget,
+  active: { milestoneId?: string },
+): ItemStatus {
+  if (milestone.slices.length > 0 && milestone.slices.every((slice) => slice.done)) {
+    return "done"
+  }
+  if (active.milestoneId === milestone.id) {
+    return "in-progress"
+  }
+  return milestone.slices.some((slice) => slice.done) ? "in-progress" : "pending"
+}
+
 export function Sidebar({ activeView, onViewChange }: SidebarProps) {
-  const [expandedMilestones, setExpandedMilestones] = useState<string[]>(["M002"])
-  const [expandedSlices, setExpandedSlices] = useState<string[]>(["M002-S02"])
-
-  const toggleMilestone = (id: string) => {
-    setExpandedMilestones((prev) =>
-      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
-    )
-  }
-
-  const toggleSlice = (id: string) => {
-    setExpandedSlices((prev) =>
-      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id]
-    )
-  }
+  const workspace = useGSDWorkspaceState()
+  const [expandedMilestones, setExpandedMilestones] = useState<string[]>([])
+  const [expandedSlices, setExpandedSlices] = useState<string[]>([])
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
     { id: "terminal", label: "Terminal", icon: Terminal },
     { id: "power", label: "Power Mode", icon: Columns2 },
-    { id: "roadmap", label: "Roadmap", icon: Map },
+    { id: "roadmap", label: "Roadmap", icon: MapIcon },
     { id: "files", label: "Files", icon: Folder },
     { id: "activity", label: "Activity", icon: Activity },
   ]
 
+  const milestones = workspace.boot?.workspace.milestones ?? []
+  const activeScope = workspace.boot?.workspace.active
+  const projectLabel = getProjectDisplayName(workspace.boot?.project.cwd)
+  const currentScope = getCurrentScopeLabel(workspace.boot?.workspace)
+  const sessionLabel = getSessionLabelFromBridge(workspace.boot?.bridge)
+  const validationCount = workspace.boot?.workspace.validationIssues.length ?? 0
+  const visibleError = workspace.lastBridgeError?.message ?? workspace.lastClientError
+
+  useEffect(() => {
+    if (!activeScope?.milestoneId) return
+    setExpandedMilestones((previous) =>
+      previous.includes(activeScope.milestoneId!) ? previous : [...previous, activeScope.milestoneId!],
+    )
+    if (activeScope.sliceId) {
+      const sliceKey = `${activeScope.milestoneId}-${activeScope.sliceId}`
+      setExpandedSlices((previous) => (previous.includes(sliceKey) ? previous : [...previous, sliceKey]))
+    }
+  }, [activeScope?.milestoneId, activeScope?.sliceId])
+
+  const milestoneStatus = useMemo(() => {
+    return new Map(milestones.map((milestone) => [milestone.id, getMilestoneStatus(milestone, activeScope ?? {})]))
+  }, [milestones, activeScope])
+
+  const toggleMilestone = (id: string) => {
+    setExpandedMilestones((prev) =>
+      prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id],
+    )
+  }
+
+  const toggleSlice = (id: string) => {
+    setExpandedSlices((prev) =>
+      prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id],
+    )
+  }
+
   return (
     <div className="flex h-full">
-      {/* Icon bar */}
-      <div className="flex w-12 flex-col items-center border-r border-border bg-sidebar py-3 gap-1">
+      <div className="flex w-12 flex-col items-center gap-1 border-r border-border bg-sidebar py-3">
         {navItems.map((item) => (
           <button
             key={item.id}
@@ -171,7 +141,7 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
               "flex h-10 w-10 items-center justify-center rounded-md transition-colors",
               activeView === item.id
                 ? "bg-accent text-foreground"
-                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                : "text-muted-foreground hover:bg-accent/50 hover:text-foreground",
             )}
             title={item.label}
           >
@@ -180,13 +150,13 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
         ))}
         <div className="mt-auto flex flex-col gap-1">
           <button
-            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             title="Git"
           >
             <GitBranch className="h-5 w-5" />
           </button>
           <button
-            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             title="Settings"
           >
             <Settings className="h-5 w-5" />
@@ -194,90 +164,160 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
         </div>
       </div>
 
-      {/* Explorer panel */}
-      <div className="flex w-56 flex-col border-r border-border bg-sidebar">
-        <div className="flex h-9 items-center border-b border-border px-3">
-          <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
-            Explorer
-          </span>
+      <div className="flex w-64 flex-col border-r border-border bg-sidebar">
+        <div className="border-b border-border px-3 py-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+              Explorer
+            </span>
+            <span className="truncate text-[11px] text-muted-foreground" title={workspace.boot?.project.cwd || projectLabel}>
+              {projectLabel}
+            </span>
+          </div>
+          <div
+            className="mt-2 truncate font-mono text-[11px] text-muted-foreground/80"
+            title={workspace.boot?.project.cwd || "Project path pending"}
+          >
+            {workspace.boot?.project.cwd ? shortenPath(workspace.boot.project.cwd, 5) : "Resolving current project…"}
+          </div>
         </div>
+
+        <div className="border-b border-border px-3 py-3 text-xs">
+          <div className="space-y-1.5">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Active scope</div>
+              <div className="font-mono text-[11px] text-foreground" data-testid="sidebar-current-scope">
+                {currentScope}
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Session</div>
+              <div className="truncate text-[11px] text-muted-foreground">{sessionLabel || "Waiting for live session…"}</div>
+            </div>
+            {validationCount > 0 && (
+              <div className="flex items-center gap-1.5 text-amber-300">
+                <AlertTriangle className="h-3.5 w-3.5" />
+                <span>{validationCount} workspace validation issue{validationCount === 1 ? "" : "s"}</span>
+              </div>
+            )}
+            {visibleError && (
+              <div
+                className="rounded border border-destructive/20 bg-destructive/10 px-2 py-1.5 text-destructive"
+                data-testid="sidebar-bridge-error"
+              >
+                {visibleError}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="flex-1 overflow-y-auto py-1">
           <div className="px-2 py-1.5">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Milestones
             </span>
           </div>
-          {mockMilestones.map((milestone) => (
-            <div key={milestone.id}>
-              <button
-                onClick={() => toggleMilestone(milestone.id)}
-                className="flex w-full items-center gap-1.5 px-2 py-1 text-sm hover:bg-accent/50 transition-colors"
-              >
-                {expandedMilestones.includes(milestone.id) ? (
-                  <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
-                )}
-                <StatusIcon status={milestone.status} />
-                <span
+
+          {workspace.bootStatus === "loading" && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">Loading workspace index…</div>
+          )}
+
+          {workspace.bootStatus === "error" && milestones.length === 0 && (
+            <div className="px-3 py-2 text-xs text-destructive">Workspace boot failed before the explorer could load.</div>
+          )}
+
+          {workspace.bootStatus === "ready" && milestones.length === 0 && (
+            <div className="px-3 py-2 text-xs text-muted-foreground">No milestones found for this project.</div>
+          )}
+
+          {milestones.map((milestone) => {
+            const milestoneOpen = expandedMilestones.includes(milestone.id)
+            const milestoneActive = activeScope?.milestoneId === milestone.id
+            const status = milestoneStatus.get(milestone.id) ?? "pending"
+
+            return (
+              <div key={milestone.id}>
+                <button
+                  onClick={() => toggleMilestone(milestone.id)}
                   className={cn(
-                    "truncate",
-                    milestone.status === "pending" && "text-muted-foreground"
+                    "flex w-full items-center gap-1.5 px-2 py-1 text-sm transition-colors hover:bg-accent/50",
+                    milestoneActive && "bg-accent/30",
                   )}
                 >
-                  {milestone.id}: {milestone.name}
-                </span>
-              </button>
-              {expandedMilestones.includes(milestone.id) && (
-                <div className="ml-4">
-                  {milestone.slices.map((slice) => (
-                    <div key={`${milestone.id}-${slice.id}`}>
-                      <button
-                        onClick={() => toggleSlice(`${milestone.id}-${slice.id}`)}
-                        className="flex w-full items-center gap-1.5 px-2 py-1 text-sm hover:bg-accent/50 transition-colors"
-                      >
-                        {expandedSlices.includes(`${milestone.id}-${slice.id}`) ? (
-                          <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                        ) : (
-                          <ChevronRight className="h-3 w-3 text-muted-foreground" />
-                        )}
-                        <StatusIcon status={slice.status} />
-                        <span
-                          className={cn(
-                            "truncate text-[13px]",
-                            slice.status === "pending" && "text-muted-foreground"
-                          )}
-                        >
-                          {slice.id}: {slice.name}
-                        </span>
-                      </button>
-                      {expandedSlices.includes(`${milestone.id}-${slice.id}`) && (
-                        <div className="ml-5">
-                          {slice.tasks.map((task) => (
-                            <div
-                              key={`${milestone.id}-${slice.id}-${task.id}`}
-                              className="flex items-center gap-1.5 px-2 py-0.5 text-xs hover:bg-accent/50 transition-colors cursor-pointer"
-                            >
-                              <FileText className="h-3 w-3 text-muted-foreground" />
-                              <StatusIcon status={task.status} />
-                              <span
-                                className={cn(
-                                  "truncate",
-                                  task.status === "pending" && "text-muted-foreground"
-                                )}
-                              >
-                                {task.id}: {task.name}
-                              </span>
+                  {milestoneOpen ? (
+                    <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                  )}
+                  <StatusIcon status={status} />
+                  <span className={cn("truncate", status === "pending" && "text-muted-foreground")}>
+                    {milestone.id}: {milestone.title}
+                  </span>
+                </button>
+
+                {milestoneOpen && (
+                  <div className="ml-4">
+                    {milestone.slices.map((slice) => {
+                      const sliceKey = `${milestone.id}-${slice.id}`
+                      const sliceOpen = expandedSlices.includes(sliceKey)
+                      const sliceStatus = getSliceStatus(milestone.id, slice, activeScope ?? {})
+                      const sliceActive = activeScope?.milestoneId === milestone.id && activeScope.sliceId === slice.id
+
+                      return (
+                        <div key={sliceKey}>
+                          <button
+                            onClick={() => toggleSlice(sliceKey)}
+                            className={cn(
+                              "flex w-full items-center gap-1.5 px-2 py-1 text-sm transition-colors hover:bg-accent/50",
+                              sliceActive && "bg-accent/20",
+                            )}
+                          >
+                            {sliceOpen ? (
+                              <ChevronDown className="h-3 w-3 text-muted-foreground" />
+                            ) : (
+                              <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                            )}
+                            <StatusIcon status={sliceStatus} />
+                            <span className={cn("truncate text-[13px]", sliceStatus === "pending" && "text-muted-foreground")}>
+                              {slice.id}: {slice.title}
+                            </span>
+                          </button>
+
+                          {sliceOpen && (
+                            <div className="ml-5">
+                              {slice.branch && (
+                                <div className="px-2 py-0.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                                  {slice.branch}
+                                </div>
+                              )}
+                              {slice.tasks.map((task) => {
+                                const taskStatus = getTaskStatus(milestone.id, slice.id, task, activeScope ?? {})
+                                return (
+                                  <div
+                                    key={`${sliceKey}-${task.id}`}
+                                    className={cn(
+                                      "flex cursor-pointer items-center gap-1.5 px-2 py-0.5 text-xs transition-colors hover:bg-accent/50",
+                                      activeScope?.taskId === task.id && sliceActive && "bg-accent/10",
+                                    )}
+                                  >
+                                    <FileText className="h-3 w-3 text-muted-foreground" />
+                                    <StatusIcon status={taskStatus} />
+                                    <span className={cn("truncate", taskStatus === "pending" && "text-muted-foreground")}>
+                                      {task.id}: {task.title}
+                                    </span>
+                                  </div>
+                                )
+                              })}
                             </div>
-                          ))}
+                          )}
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>

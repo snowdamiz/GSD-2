@@ -14,17 +14,6 @@ Guidelines:
 
 ## Active
 
-### R001 — Browser-only `--web` launch path
-- Class: launchability
-- Status: active
-- Description: Running `gsd --web` starts browser mode for the current project, auto-opens the web workspace, and does not launch the Pi/GSD TUI.
-- Why it matters: The browser-first product path is not real if it still depends on the TUI at startup.
-- Source: user
-- Primary owning slice: M001/S01
-- Supporting slices: M001/S07
-- Validation: mapped
-- Notes: The launch path is the first user-visible contract for web mode.
-
 ### R002 — Browser onboarding validates required credentials before use
 - Class: launchability
 - Status: active
@@ -35,17 +24,6 @@ Guidelines:
 - Supporting slices: M001/S01, M001/S07
 - Validation: mapped
 - Notes: Preserve the existing GSD provider/tool setup model, but move it into the browser flow.
-
-### R003 — Web mode opens into the current project/cwd workspace
-- Class: primary-user-loop
-- Status: active
-- Description: `gsd --web` should open directly into the current working directory's GSD workspace rather than a generic launcher.
-- Why it matters: This keeps the web path aligned with how GSD is launched today and avoids friction at the point of use.
-- Source: user
-- Primary owning slice: M001/S01
-- Supporting slices: M001/S04
-- Validation: mapped
-- Notes: Broader project switching is allowed later, but current-project launch is the primary contract.
 
 ### R004 — Primary GSD workflow runs end-to-end in the browser without opening TUI
 - Class: primary-user-loop
@@ -137,7 +115,27 @@ Guidelines:
 
 ## Validated
 
-None yet.
+### R001 — Browser-only `--web` launch path
+- Class: launchability
+- Status: validated
+- Description: Running `gsd --web` starts browser mode for the current project, auto-opens the web workspace, and does not launch the Pi/GSD TUI.
+- Why it matters: The browser-first product path is not real if it still depends on the TUI at startup.
+- Source: user
+- Primary owning slice: M001/S01
+- Supporting slices: M001/S07
+- Validation: verified by `src/tests/web-mode-cli.test.ts`, the slice-level runtime integration test, and a fresh browser launch with no console errors.
+- Notes: S01 proved the launch path itself; broader browser-first workflow coverage remains with later slices.
+
+### R003 — Web mode opens into the current project/cwd workspace
+- Class: primary-user-loop
+- Status: validated
+- Description: `gsd --web` should open directly into the current working directory's GSD workspace rather than a generic launcher.
+- Why it matters: This keeps the web path aligned with how GSD is launched today and avoids friction at the point of use.
+- Source: user
+- Primary owning slice: M001/S01
+- Supporting slices: M001/S04
+- Validation: verified by `/api/boot`, the slice-level runtime integration test, and browser rendering of the live current-project scope/state.
+- Notes: Broader project switching is allowed later, but current-project launch is now real.
 
 ## Deferred
 
@@ -213,9 +211,9 @@ None yet.
 
 | ID | Class | Status | Primary owner | Supporting | Proof |
 |---|---|---|---|---|---|
-| R001 | launchability | active | M001/S01 | M001/S07 | mapped |
+| R001 | launchability | validated | M001/S01 | M001/S07 | validated |
 | R002 | launchability | active | M001/S02 | M001/S01, M001/S07 | mapped |
-| R003 | primary-user-loop | active | M001/S01 | M001/S04 | mapped |
+| R003 | primary-user-loop | validated | M001/S01 | M001/S04 | validated |
 | R004 | primary-user-loop | active | M001/S07 | M001/S01, M001/S02, M001/S03, M001/S04, M001/S05, M001/S06 | mapped |
 | R005 | core-capability | active | M001/S04 | M001/S03, M001/S05, M001/S06 | mapped |
 | R006 | continuity | active | M001/S03 | M001/S07 | mapped |
@@ -233,7 +231,7 @@ None yet.
 
 ## Coverage Summary
 
-- Active requirements: 11
-- Mapped to concrete M001 slices: 10
-- Validated: 0
+- Active requirements: 9
+- Mapped to concrete M001 slices: 8
+- Validated: 2
 - Unmapped active requirements: 0

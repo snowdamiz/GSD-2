@@ -53,7 +53,7 @@ This milestone is complete only when all are true:
 
 ## Slices
 
-- [ ] **S01: Web host + agent bridge** `risk:high` `depends:[]`
+- [x] **S01: Web host + agent bridge** `risk:high` `depends:[]`
   > After this: running `gsd --web` opens a live browser workspace for the current project, and the UI can connect to real GSD session state/events through a local bridge instead of placeholders.
 
 - [ ] **S02: First-run setup wizard** `risk:high` `depends:[S01]`

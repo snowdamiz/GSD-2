@@ -1,0 +1,824 @@
+"use client"
+
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react"
+
+export type WorkspaceStatus = "idle" | "loading" | "ready" | "error"
+export type WorkspaceConnectionState =
+  | "idle"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "disconnected"
+  | "error"
+export type TerminalLineType = "input" | "output" | "system" | "success" | "error"
+export type BridgePhase = "idle" | "starting" | "ready" | "failed"
+export type WorkspaceStatusTone = "muted" | "info" | "success" | "warning" | "danger"
+
+export interface WorkspaceModelRef {
+  id?: string
+  provider?: string
+  providerId?: string
+}
+
+export interface BridgeLastError {
+  message: string
+  at: string
+  phase: BridgePhase
+  afterSessionAttachment: boolean
+  commandType?: string
+}
+
+export interface WorkspaceSessionState {
+  model?: WorkspaceModelRef
+  thinkingLevel: string
+  isStreaming: boolean
+  isCompacting: boolean
+  steeringMode: "all" | "one-at-a-time"
+  followUpMode: "all" | "one-at-a-time"
+  sessionFile?: string
+  sessionId: string
+  sessionName?: string
+  autoCompactionEnabled: boolean
+  messageCount: number
+  pendingMessageCount: number
+}
+
+export interface BridgeRuntimeSnapshot {
+  phase: BridgePhase
+  projectCwd: string
+  projectSessionsDir: string
+  packageRoot: string
+  startedAt: string | null
+  updatedAt: string
+  connectionCount: number
+  lastCommandType: string | null
+  activeSessionId: string | null
+  activeSessionFile: string | null
+  sessionState: WorkspaceSessionState | null
+  lastError: BridgeLastError | null
+}
+
+export interface WorkspaceTaskTarget {
+  id: string
+  title: string
+  done: boolean
+  planPath?: string
+  summaryPath?: string
+}
+
+export interface WorkspaceSliceTarget {
+  id: string
+  title: string
+  done: boolean
+  planPath?: string
+  summaryPath?: string
+  uatPath?: string
+  tasksDir?: string
+  branch?: string
+  tasks: WorkspaceTaskTarget[]
+}
+
+export interface WorkspaceMilestoneTarget {
+  id: string
+  title: string
+  roadmapPath?: string
+  slices: WorkspaceSliceTarget[]
+}
+
+export interface WorkspaceScopeTarget {
+  scope: string
+  label: string
+  kind: "project" | "milestone" | "slice" | "task"
+}
+
+export interface WorkspaceValidationIssue {
+  message?: string
+  [key: string]: unknown
+}
+
+export interface WorkspaceIndex {
+  milestones: WorkspaceMilestoneTarget[]
+  active: {
+    milestoneId?: string
+    sliceId?: string
+    taskId?: string
+    phase: string
+  }
+  scopes: WorkspaceScopeTarget[]
+  validationIssues: WorkspaceValidationIssue[]
+}
+
+export interface AutoDashboardData {
+  active: boolean
+  paused: boolean
+  stepMode: boolean
+  startTime: number
+  elapsed: number
+  currentUnit: { type: string; id: string; startedAt: number } | null
+  completedUnits: { type: string; id: string; startedAt: number; finishedAt: number }[]
+  basePath: string
+  totalCost: number
+  totalTokens: number
+}
+
+export interface BootResumableSession {
+  id: string
+  path: string
+  cwd: string
+  name?: string
+  createdAt: string
+  modifiedAt: string
+  messageCount: number
+  isActive: boolean
+}
+
+export interface WorkspaceBootPayload {
+  project: {
+    cwd: string
+    sessionsDir: string
+    packageRoot: string
+  }
+  workspace: WorkspaceIndex
+  auto: AutoDashboardData
+  onboardingNeeded: boolean
+  resumableSessions: BootResumableSession[]
+  bridge: BridgeRuntimeSnapshot
+}
+
+export interface BridgeStatusEvent {
+  type: "bridge_status"
+  bridge: BridgeRuntimeSnapshot
+}
+
+export interface ExtensionUiRequestEvent {
+  type: "extension_ui_request"
+  id: string
+  method: string
+  title?: string
+  message?: string
+  notifyType?: "info" | "warning" | "error"
+  [key: string]: unknown
+}
+
+export interface ExtensionErrorEvent {
+  type: "extension_error"
+  extensionPath?: string
+  event?: string
+  error: string
+}
+
+export type WorkspaceEvent =
+  | BridgeStatusEvent
+  | ExtensionUiRequestEvent
+  | ExtensionErrorEvent
+  | ({ type: string; [key: string]: unknown } & Record<string, unknown>)
+
+export interface WorkspaceCommandResponse {
+  type: "response"
+  command: string
+  success: boolean
+  error?: string
+  data?: unknown
+  id?: string
+}
+
+export interface WorkspaceBridgeCommand {
+  type: string
+  [key: string]: unknown
+}
+
+export interface WorkspaceTerminalLine {
+  id: string
+  type: TerminalLineType
+  content: string
+  timestamp: string
+}
+
+export interface WorkspaceStoreState {
+  bootStatus: WorkspaceStatus
+  connectionState: WorkspaceConnectionState
+  boot: WorkspaceBootPayload | null
+  terminalLines: WorkspaceTerminalLine[]
+  lastClientError: string | null
+  lastBridgeError: BridgeLastError | null
+  sessionAttached: boolean
+  lastEventType: string | null
+  commandInFlight: string | null
+}
+
+const MAX_TERMINAL_LINES = 250
+
+function timestampLabel(date = new Date()): string {
+  return date.toLocaleTimeString("en-US", {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
+function createTerminalLine(type: TerminalLineType, content: string): WorkspaceTerminalLine {
+  return {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    type,
+    content,
+    timestamp: timestampLabel(),
+  }
+}
+
+function withTerminalLine(lines: WorkspaceTerminalLine[], line: WorkspaceTerminalLine): WorkspaceTerminalLine[] {
+  return [...lines, line].slice(-MAX_TERMINAL_LINES)
+}
+
+function hasAttachedSession(bridge: BridgeRuntimeSnapshot | null | undefined): boolean {
+  return Boolean(bridge?.activeSessionId || bridge?.sessionState?.sessionId)
+}
+
+function normalizeClientError(error: unknown): string {
+  if (error instanceof Error) return error.message
+  return String(error)
+}
+
+function getPromptCommandType(bridge: BridgeRuntimeSnapshot | null | undefined): "prompt" | "follow_up" {
+  return bridge?.sessionState?.isStreaming ? "follow_up" : "prompt"
+}
+
+function summarizeBridgeStatus(bridge: BridgeRuntimeSnapshot): { type: TerminalLineType; message: string } {
+  if (bridge.phase === "failed") {
+    return {
+      type: "error",
+      message: `Bridge failed${bridge.lastError?.message ? ` — ${bridge.lastError.message}` : ""}`,
+    }
+  }
+
+  if (bridge.phase === "starting") {
+    return {
+      type: "system",
+      message: "Bridge starting for the current project…",
+    }
+  }
+
+  if (bridge.phase === "ready") {
+    const sessionLabel = getSessionLabelFromBridge(bridge)
+    return {
+      type: "success",
+      message: sessionLabel
+        ? `Live bridge ready — attached to ${sessionLabel}`
+        : "Live bridge ready — session attachment pending",
+    }
+  }
+
+  return {
+    type: "system",
+    message: "Bridge idle",
+  }
+}
+
+function summarizeEvent(event: WorkspaceEvent): { type: TerminalLineType; message: string } | null {
+  switch (event.type) {
+    case "bridge_status":
+      return summarizeBridgeStatus(event.bridge)
+    case "agent_start":
+      return { type: "system", message: "[Agent] Run started" }
+    case "agent_end":
+      return { type: "success", message: "[Agent] Run finished" }
+    case "turn_start":
+      return { type: "system", message: "[Agent] Turn started" }
+    case "turn_end":
+      return { type: "success", message: "[Agent] Turn complete" }
+    case "tool_execution_start":
+      return {
+        type: "output",
+        message: `[Tool] ${typeof event.toolName === "string" ? event.toolName : "tool"} started`,
+      }
+    case "tool_execution_end":
+      return {
+        type: event.isError ? "error" : "success",
+        message: `[Tool] ${typeof event.toolName === "string" ? event.toolName : "tool"} ${event.isError ? "failed" : "completed"}`,
+      }
+    case "auto_compaction_start":
+      return { type: "system", message: "[Auto] Compaction started" }
+    case "auto_compaction_end":
+      return {
+        type: event.aborted ? "error" : "success",
+        message: event.aborted ? "[Auto] Compaction aborted" : "[Auto] Compaction finished",
+      }
+    case "auto_retry_start":
+      return {
+        type: "system",
+        message: `[Auto] Retry ${String(event.attempt)}/${String(event.maxAttempts)} scheduled`,
+      }
+    case "auto_retry_end":
+      return {
+        type: event.success ? "success" : "error",
+        message: event.success ? "[Auto] Retry recovered the run" : "[Auto] Retry exhausted",
+      }
+    case "extension_ui_request": {
+      const detail =
+        typeof event.title === "string" && event.title.trim().length > 0
+          ? event.title
+          : typeof event.message === "string" && event.message.trim().length > 0
+            ? event.message
+            : event.method
+      return {
+        type: event.notifyType === "error" ? "error" : "system",
+        message: `[UI] ${detail}`,
+      }
+    }
+    case "extension_error":
+      return { type: "error", message: `[Extension] ${event.error}` }
+    default:
+      return null
+  }
+}
+
+function cloneBootWithBridge(
+  boot: WorkspaceBootPayload | null,
+  bridge: BridgeRuntimeSnapshot,
+): WorkspaceBootPayload | null {
+  if (!boot) return null
+  return {
+    ...boot,
+    bridge,
+  }
+}
+
+function bootSeedLines(boot: WorkspaceBootPayload): WorkspaceTerminalLine[] {
+  const lines = [
+    createTerminalLine("system", `GSD web workspace attached to ${boot.project.cwd}`),
+    createTerminalLine("system", `Workspace scope: ${getCurrentScopeLabel(boot.workspace)}`),
+  ]
+
+  const bridgeSummary = summarizeBridgeStatus(boot.bridge)
+  lines.push(createTerminalLine(bridgeSummary.type, bridgeSummary.message))
+
+  if (boot.bridge.lastError) {
+    lines.push(createTerminalLine("error", `Bridge error: ${boot.bridge.lastError.message}`))
+  }
+
+  if (boot.onboardingNeeded) {
+    lines.push(createTerminalLine("system", "Onboarding is still required before model-backed prompts will run"))
+  }
+
+  return lines
+}
+
+function responseToLine(response: WorkspaceCommandResponse): WorkspaceTerminalLine {
+  if (!response.success) {
+    return createTerminalLine("error", `Command failed (${response.command}) — ${response.error ?? "unknown error"}`)
+  }
+
+  switch (response.command) {
+    case "get_state":
+      return createTerminalLine("success", "Session state refreshed")
+    case "new_session":
+      return createTerminalLine("success", "Started a new session")
+    case "prompt":
+      return createTerminalLine("success", "Prompt accepted by the live bridge")
+    case "follow_up":
+      return createTerminalLine("success", "Follow-up queued on the live bridge")
+    default:
+      return createTerminalLine("success", `Command accepted (${response.command})`)
+  }
+}
+
+export function shortenPath(path: string | undefined, segmentCount = 3): string {
+  if (!path) return "—"
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  if (parts.length <= segmentCount) {
+    return path.startsWith("/") ? `/${parts.join("/")}` : parts.join("/")
+  }
+  const tail = parts.slice(-segmentCount).join("/")
+  return `…/${tail}`
+}
+
+export function getProjectDisplayName(path: string | undefined): string {
+  if (!path) return "Current project"
+  const parts = path.split(/[\\/]/).filter(Boolean)
+  return parts.at(-1) || path
+}
+
+export function formatDuration(ms: number): string {
+  if (!ms || ms < 1000) return "0m"
+  const totalMinutes = Math.floor(ms / 60_000)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (hours > 0) return `${hours}h ${minutes}m`
+  return `${minutes}m`
+}
+
+export function formatTokens(tokens: number): string {
+  if (!Number.isFinite(tokens) || tokens <= 0) return "0"
+  if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`
+  if (tokens >= 1_000) return `${Math.round(tokens / 1_000)}K`
+  return String(Math.round(tokens))
+}
+
+export function formatCost(cost: number): string {
+  if (!Number.isFinite(cost) || cost <= 0) return "$0.00"
+  return `$${cost.toFixed(2)}`
+}
+
+export function getCurrentScopeLabel(workspace: WorkspaceIndex | null | undefined): string {
+  if (!workspace) return "Project scope pending"
+  const scope = [workspace.active.milestoneId, workspace.active.sliceId, workspace.active.taskId]
+    .filter(Boolean)
+    .join("/")
+  return scope ? `${scope} — ${workspace.active.phase}` : `project — ${workspace.active.phase}`
+}
+
+export function getCurrentBranch(workspace: WorkspaceIndex | null | undefined): string | null {
+  if (!workspace?.active.milestoneId || !workspace.active.sliceId) {
+    return null
+  }
+
+  const milestone = workspace.milestones.find((entry) => entry.id === workspace.active.milestoneId)
+  const slice = milestone?.slices.find((entry) => entry.id === workspace.active.sliceId)
+  return slice?.branch ?? null
+}
+
+export function getCurrentSlice(workspace: WorkspaceIndex | null | undefined): WorkspaceSliceTarget | null {
+  if (!workspace?.active.milestoneId || !workspace.active.sliceId) return null
+  const milestone = workspace.milestones.find((entry) => entry.id === workspace.active.milestoneId)
+  return milestone?.slices.find((entry) => entry.id === workspace.active.sliceId) ?? null
+}
+
+export function getSessionLabelFromBridge(bridge: BridgeRuntimeSnapshot | null | undefined): string | null {
+  if (!bridge?.sessionState && !bridge?.activeSessionId) return null
+  const sessionName = bridge.sessionState?.sessionName?.trim()
+  if (sessionName) return sessionName
+  if (bridge.activeSessionId) return `session ${bridge.activeSessionId}`
+  return bridge.sessionState?.sessionId ?? null
+}
+
+export function getModelLabel(bridge: BridgeRuntimeSnapshot | null | undefined): string {
+  const model = bridge?.sessionState?.model
+  if (!model) return "model pending"
+  return model.id || model.providerId || model.provider || "model pending"
+}
+
+export function getStatusPresentation(state: Pick<WorkspaceStoreState, "bootStatus" | "connectionState" | "boot">): {
+  label: string
+  tone: WorkspaceStatusTone
+} {
+  if (state.bootStatus === "loading") {
+    return { label: "Loading workspace", tone: "info" }
+  }
+
+  if (state.bootStatus === "error") {
+    return { label: "Boot failed", tone: "danger" }
+  }
+
+  if (state.boot?.bridge.phase === "failed") {
+    return { label: "Bridge failed", tone: "danger" }
+  }
+
+  switch (state.connectionState) {
+    case "connected":
+      return { label: "Bridge connected", tone: "success" }
+    case "connecting":
+      return { label: "Connecting stream", tone: "info" }
+    case "reconnecting":
+      return { label: "Reconnecting stream", tone: "warning" }
+    case "disconnected":
+      return { label: "Stream disconnected", tone: "warning" }
+    case "error":
+      return { label: "Stream error", tone: "danger" }
+    default:
+      return { label: "Workspace idle", tone: "muted" }
+  }
+}
+
+function createInitialState(): WorkspaceStoreState {
+  return {
+    bootStatus: "idle",
+    connectionState: "idle",
+    boot: null,
+    terminalLines: [createTerminalLine("system", "Preparing the live GSD workspace…")],
+    lastClientError: null,
+    lastBridgeError: null,
+    sessionAttached: false,
+    lastEventType: null,
+    commandInFlight: null,
+  }
+}
+
+class GSDWorkspaceStore {
+  private state = createInitialState()
+  private readonly listeners = new Set<() => void>()
+  private bootPromise: Promise<void> | null = null
+  private eventSource: EventSource | null = null
+  private started = false
+  private disposed = false
+  private lastBridgeDigest: string | null = null
+  private lastStreamState: WorkspaceConnectionState = "idle"
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => {
+      this.listeners.delete(listener)
+    }
+  }
+
+  getSnapshot = (): WorkspaceStoreState => this.state
+
+  start = (): void => {
+    if (this.started || this.disposed) return
+    this.started = true
+    void this.refreshBoot()
+  }
+
+  dispose = (): void => {
+    this.disposed = true
+    this.started = false
+    this.closeEventStream()
+  }
+
+  clearTerminalLines = (): void => {
+    const replacement = this.state.boot ? bootSeedLines(this.state.boot) : [createTerminalLine("system", "Terminal cleared")]
+    this.patchState({ terminalLines: replacement })
+  }
+
+  refreshBoot = async (): Promise<void> => {
+    if (this.bootPromise) return await this.bootPromise
+
+    this.bootPromise = (async () => {
+      this.patchState({
+        bootStatus: "loading",
+        connectionState: this.state.connectionState === "connected" ? "connected" : "connecting",
+        lastClientError: null,
+      })
+
+      try {
+        const response = await fetch("/api/boot", {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`Boot request failed with ${response.status}`)
+        }
+
+        const boot = (await response.json()) as WorkspaceBootPayload
+        this.lastBridgeDigest = null
+        this.lastBridgeDigest = [boot.bridge.phase, boot.bridge.activeSessionId, boot.bridge.lastError?.at, boot.bridge.lastError?.message].join("::")
+        this.patchState({
+          bootStatus: "ready",
+          boot,
+          connectionState: this.eventSource ? this.state.connectionState : "connecting",
+          lastBridgeError: boot.bridge.lastError,
+          sessionAttached: hasAttachedSession(boot.bridge),
+          lastClientError: null,
+          terminalLines: bootSeedLines(boot),
+        })
+        this.ensureEventStream()
+      } catch (error) {
+        const message = normalizeClientError(error)
+        this.patchState({
+          bootStatus: "error",
+          connectionState: "error",
+          lastClientError: message,
+          terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("error", `Boot failed — ${message}`)),
+        })
+      }
+    })().finally(() => {
+      this.bootPromise = null
+    })
+
+    await this.bootPromise
+  }
+
+  sendCommand = async (command: WorkspaceBridgeCommand): Promise<WorkspaceCommandResponse | null> => {
+    this.patchState({
+      commandInFlight: command.type,
+      terminalLines: withTerminalLine(
+        this.state.terminalLines,
+        createTerminalLine("input", typeof command.message === "string" ? command.message : `/${command.type}`),
+      ),
+    })
+
+    try {
+      const response = await fetch("/api/session/command", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify(command),
+      })
+
+      const payload = (await response.json()) as WorkspaceCommandResponse | { ok: true }
+      if ("ok" in payload) {
+        return null
+      }
+
+      if (payload.command === "get_state" && payload.success && this.state.boot) {
+        const nextBridge = {
+          ...this.state.boot.bridge,
+          sessionState: payload.data as WorkspaceSessionState,
+          activeSessionId: (payload.data as WorkspaceSessionState).sessionId,
+          activeSessionFile: (payload.data as WorkspaceSessionState).sessionFile ?? this.state.boot.bridge.activeSessionFile,
+          lastCommandType: "get_state",
+          updatedAt: new Date().toISOString(),
+        }
+
+        this.patchState({
+          boot: cloneBootWithBridge(this.state.boot, nextBridge),
+          lastBridgeError: nextBridge.lastError,
+          sessionAttached: hasAttachedSession(nextBridge),
+        })
+      }
+
+      this.patchState({
+        terminalLines: withTerminalLine(this.state.terminalLines, responseToLine(payload)),
+        lastBridgeError: payload.success ? this.state.lastBridgeError : this.state.boot?.bridge.lastError ?? this.state.lastBridgeError,
+      })
+      return payload
+    } catch (error) {
+      const message = normalizeClientError(error)
+      this.patchState({
+        lastClientError: message,
+        terminalLines: withTerminalLine(
+          this.state.terminalLines,
+          createTerminalLine("error", `Command failed (${command.type}) — ${message}`),
+        ),
+      })
+      return {
+        type: "response",
+        command: command.type,
+        success: false,
+        error: message,
+      }
+    } finally {
+      this.patchState({ commandInFlight: null })
+    }
+  }
+
+  private emit(): void {
+    for (const listener of this.listeners) {
+      listener()
+    }
+  }
+
+  private patchState(patch: Partial<WorkspaceStoreState>): void {
+    this.state = { ...this.state, ...patch }
+    this.emit()
+  }
+
+  private ensureEventStream(): void {
+    if (this.eventSource || this.disposed) return
+
+    const stream = new EventSource("/api/session/events")
+    this.eventSource = stream
+
+    stream.onopen = () => {
+      const nextState = this.lastStreamState === "idle" ? "connected" : this.lastStreamState === "connected" ? "connected" : "connected"
+      if (this.lastStreamState === "reconnecting" || this.lastStreamState === "disconnected" || this.lastStreamState === "error") {
+        this.patchState({
+          terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("success", "Live event stream reconnected")),
+        })
+      }
+      this.lastStreamState = nextState
+      this.patchState({ connectionState: nextState, lastClientError: null })
+    }
+
+    stream.onmessage = (message) => {
+      try {
+        const payload = JSON.parse(message.data) as WorkspaceEvent
+        this.handleEvent(payload)
+      } catch (error) {
+        const text = normalizeClientError(error)
+        this.patchState({
+          lastClientError: text,
+          terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine("error", `Failed to parse stream event — ${text}`)),
+        })
+      }
+    }
+
+    stream.onerror = () => {
+      const nextConnectionState = this.lastStreamState === "connected" ? "reconnecting" : "error"
+      if (nextConnectionState !== this.lastStreamState) {
+        this.patchState({
+          connectionState: nextConnectionState,
+          terminalLines: withTerminalLine(
+            this.state.terminalLines,
+            createTerminalLine(
+              nextConnectionState === "reconnecting" ? "system" : "error",
+              nextConnectionState === "reconnecting"
+                ? "Live event stream disconnected — retrying…"
+                : "Live event stream failed before connection was established",
+            ),
+          ),
+        })
+      } else {
+        this.patchState({ connectionState: nextConnectionState })
+      }
+      this.lastStreamState = nextConnectionState
+    }
+  }
+
+  private closeEventStream(): void {
+    this.eventSource?.close()
+    this.eventSource = null
+  }
+
+  private handleEvent(event: WorkspaceEvent): void {
+    this.patchState({ lastEventType: event.type })
+
+    if (event.type === "bridge_status") {
+      this.recordBridgeStatus(event.bridge)
+      return
+    }
+
+    const summary = summarizeEvent(event)
+    if (!summary) return
+
+    this.patchState({
+      terminalLines: withTerminalLine(this.state.terminalLines, createTerminalLine(summary.type, summary.message)),
+    })
+  }
+
+  private recordBridgeStatus(bridge: BridgeRuntimeSnapshot): void {
+    const digest = [bridge.phase, bridge.activeSessionId, bridge.lastError?.at, bridge.lastError?.message].join("::")
+    const shouldEmitLine = digest !== this.lastBridgeDigest
+    this.lastBridgeDigest = digest
+
+    const nextBoot = cloneBootWithBridge(this.state.boot, bridge)
+    const nextPatch: Partial<WorkspaceStoreState> = {
+      boot: nextBoot,
+      lastBridgeError: bridge.lastError,
+      sessionAttached: hasAttachedSession(bridge),
+    }
+
+    if (shouldEmitLine) {
+      const summary = summarizeBridgeStatus(bridge)
+      nextPatch.terminalLines = withTerminalLine(this.state.terminalLines, createTerminalLine(summary.type, summary.message))
+    }
+
+    this.patchState(nextPatch)
+  }
+}
+
+const WorkspaceStoreContext = createContext<GSDWorkspaceStore | null>(null)
+
+export function GSDWorkspaceProvider({ children }: { children: ReactNode }) {
+  const [store] = useState(() => new GSDWorkspaceStore())
+
+  useEffect(() => {
+    store.start()
+    return () => {
+      store.dispose()
+    }
+  }, [store])
+
+  return <WorkspaceStoreContext.Provider value={store}>{children}</WorkspaceStoreContext.Provider>
+}
+
+function useWorkspaceStore(): GSDWorkspaceStore {
+  const store = useContext(WorkspaceStoreContext)
+  if (!store) {
+    throw new Error("useWorkspaceStore must be used within GSDWorkspaceProvider")
+  }
+  return store
+}
+
+export function useGSDWorkspaceState(): WorkspaceStoreState {
+  const store = useWorkspaceStore()
+  return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+}
+
+export function useGSDWorkspaceActions(): Pick<GSDWorkspaceStore, "sendCommand" | "clearTerminalLines" | "refreshBoot"> {
+  const store = useWorkspaceStore()
+  return {
+    sendCommand: store.sendCommand,
+    clearTerminalLines: store.clearTerminalLines,
+    refreshBoot: store.refreshBoot,
+  }
+}
+
+export function buildPromptCommand(
+  input: string,
+  bridge: BridgeRuntimeSnapshot | null | undefined,
+): WorkspaceBridgeCommand {
+  const trimmed = input.trim()
+  if (trimmed === "/state") {
+    return { type: "get_state" }
+  }
+  if (trimmed === "/new" || trimmed === "/new-session") {
+    return { type: "new_session" }
+  }
+  return {
+    type: getPromptCommandType(bridge),
+    message: trimmed,
+  }
+}

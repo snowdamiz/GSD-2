@@ -114,7 +114,7 @@ async function loadPico(): Promise<PicoModule> {
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
 /** Open a URL in the system browser (best-effort, non-blocking) */
-function openBrowser(url: string): void {
+export function openBrowser(url: string): void {
   const cmd = process.platform === 'darwin' ? 'open' :
     process.platform === 'win32' ? 'start' :
       'xdg-open'

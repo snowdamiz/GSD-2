@@ -29,7 +29,7 @@ import {
   resolveGsdRootFile,
 } from './paths.js';
 import { getActiveSliceBranch } from './worktree.js';
-import { milestoneIdSort, findMilestoneIds } from './guided-flow.js';
+import { milestoneIdSort, findMilestoneIds } from './milestone-id-utils.js';
 
 import { join } from 'path';
 

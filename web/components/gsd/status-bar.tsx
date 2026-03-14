@@ -1,38 +1,77 @@
 "use client"
 
-import { GitBranch, Cpu, DollarSign, Clock, Zap } from "lucide-react"
+import { GitBranch, Cpu, DollarSign, Clock, Zap, AlertTriangle, Wifi } from "lucide-react"
+import {
+  formatCost,
+  formatDuration,
+  formatTokens,
+  getCurrentBranch,
+  getCurrentScopeLabel,
+  getModelLabel,
+  getStatusPresentation,
+  useGSDWorkspaceState,
+} from "@/lib/gsd-workspace-store"
+
+function toneClass(tone: ReturnType<typeof getStatusPresentation>["tone"]): string {
+  switch (tone) {
+    case "success":
+      return "text-success"
+    case "warning":
+      return "text-amber-300"
+    case "danger":
+      return "text-destructive"
+    default:
+      return "text-muted-foreground"
+  }
+}
 
 export function StatusBar() {
+  const workspace = useGSDWorkspaceState()
+  const status = getStatusPresentation(workspace)
+  const branch = getCurrentBranch(workspace.boot?.workspace) ?? "project scope"
+  const model = getModelLabel(workspace.boot?.bridge)
+  const auto = workspace.boot?.auto
+  const unitLabel = auto?.currentUnit?.id ?? getCurrentScopeLabel(workspace.boot?.workspace)
+  const visibleError = workspace.lastBridgeError?.message ?? workspace.lastClientError
+
   return (
-    <div className="flex h-6 items-center justify-between border-t border-border bg-card px-3 text-xs">
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-1.5">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-success" />
-          <span className="text-muted-foreground">Auto Mode</span>
+    <div className="flex h-7 items-center justify-between border-t border-border bg-card px-3 text-xs">
+      <div className="flex min-w-0 items-center gap-4">
+        <div className={`flex items-center gap-1.5 ${toneClass(status.tone)}`}>
+          <Wifi className="h-3 w-3" />
+          <span>{status.label}</span>
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <GitBranch className="h-3 w-3" />
-          <span className="font-mono">gsd/M002/S02</span>
+          <span className="font-mono">{branch}</span>
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Cpu className="h-3 w-3" />
-          <span className="font-mono">claude-sonnet-4-6</span>
+          <span className="font-mono">{model}</span>
         </div>
+        {visibleError && (
+          <div className="hidden max-w-sm items-center gap-1.5 truncate text-destructive lg:flex" data-testid="status-bar-error">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <span className="truncate">{visibleError}</span>
+          </div>
+        )}
       </div>
-      <div className="flex items-center gap-4">
+      <div className="flex min-w-0 items-center gap-4">
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Clock className="h-3 w-3" />
-          <span>2h 34m</span>
+          <span>{formatDuration(auto?.elapsed ?? 0)}</span>
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <Zap className="h-3 w-3" />
-          <span>847K tokens</span>
+          <span>{formatTokens(auto?.totalTokens ?? 0)}</span>
         </div>
         <div className="flex items-center gap-1.5 text-muted-foreground">
           <DollarSign className="h-3 w-3" />
-          <span>$12.47</span>
+          <span>{formatCost(auto?.totalCost ?? 0)}</span>
         </div>
-        <span className="text-muted-foreground">M002/S02/T02 — 58%</span>
+        <span className="max-w-[20rem] truncate text-muted-foreground" data-testid="status-bar-unit">
+          {unitLabel}
+        </span>
       </div>
     </div>
   )
