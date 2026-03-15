@@ -19,7 +19,19 @@ import {
   AlertTriangle,
   Loader2,
   LifeBuoy,
+  LogOut,
 } from "lucide-react"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import {
   getCurrentScopeLabel,
@@ -143,6 +155,37 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
           >
             <Settings className="h-5 w-5" />
           </button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <button
+                className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/15 hover:text-destructive"
+                title="Stop server"
+                data-testid="sidebar-signoff-button"
+              >
+                <LogOut className="h-5 w-5" />
+              </button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Stop the GSD web server?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will shut down the server process. The browser tab will stop working and you'll need to run{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">npm run gsd:web</code> again to restart it.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  onClick={async () => {
+                    await fetch("/api/shutdown", { method: "POST" }).catch(() => {})
+                  }}
+                >
+                  Stop server
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
 
