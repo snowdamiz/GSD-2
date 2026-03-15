@@ -42,6 +42,16 @@ This milestone is complete only when all are true:
 - refresh/reopen/interrupted-run/browser-recovery scenarios are exercised through the real `gsd --web` entrypoint and pass without opening the TUI
 - success criteria are re-checked against live browser behavior, not just contract tests
 
+## Closure Status
+
+**M002 is complete.**
+
+Final closure proof passed with:
+- `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/tests/integration/web-mode-runtime.test.ts src/tests/integration/web-mode-onboarding.test.ts src/tests/integration/web-mode-assembled.test.ts`
+- `node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs --experimental-strip-types --test src/tests/web-command-parity-contract.test.ts src/tests/web-session-parity-contract.test.ts src/tests/web-live-state-contract.test.ts src/tests/web-recovery-diagnostics-contract.test.ts`
+- `npm run build:web-host`
+- real packaged-host browser proof covering refresh, reopen, daily-use browser controls, and seeded interrupted-run recovery
+
 ## Requirement Coverage
 
 - Covers: R011
@@ -58,7 +68,7 @@ This milestone is complete only when all are true:
   > After this: Current-project session browsing/resume/fork/name flows, settings/auth management, and the remaining visible shell affordances have real browser surfaces aligned with TUI semantics rather than inert UI.
 - [x] **S03: Live freshness and recovery diagnostics** `risk:medium` `depends:[S01,S02]`
   > After this: During live work, dashboard/sidebar/roadmap/status/recovery panels update through targeted live state and show actionable validation, doctor, and interrupted-run diagnostics without manual refresh loops.
-- [ ] **S04: Final assembled browser hardening proof** `risk:low` `depends:[S02,S03]`
+- [x] **S04: Final assembled browser hardening proof** `risk:low` `depends:[S02,S03]`
   > After this: The real `gsd --web` entrypoint is exercised through command parity, refresh/reopen, interrupted-run recovery, and daily-use browser workflows with passing integration/runtime/browser proof.
 
 ## Boundary Map

@@ -254,6 +254,7 @@ test("/api/recovery returns structured recovery diagnostics and redacts secrets"
 
     assert.equal(payload.status, "ready")
     assert.equal(payload.project.activeSessionPath, sessionPath)
+    assert.equal(payload.project.activeSessionId, "sess-recovery")
     assert.equal(payload.bridge.retry.inProgress, true)
     assert.equal(payload.bridge.retry.attempt, 2)
     assert.equal(payload.bridge.authRefresh.phase, "failed")
@@ -262,15 +263,64 @@ test("/api/recovery returns structured recovery diagnostics and redacts secrets"
     assert.ok(Array.isArray(payload.doctor.codes))
     assert.ok(typeof payload.validation.total === "number")
     assert.equal(payload.interruptedRun.detected, true)
-    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "refresh_diagnostics"))
-    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "open_retry_controls"))
-    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "open_auth_controls"))
-    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "open_resume_controls"))
+    assert.match(payload.interruptedRun.lastError ?? "", /\[redacted\]/)
+    assert.deepEqual(
+      payload.actions.browser.map((action: { id: string }) => action.id),
+      ["refresh_diagnostics", "refresh_workspace", "open_retry_controls", "open_resume_controls", "open_auth_controls"],
+    )
     assert.ok(payload.actions.commands.some((entry: { command: string }) => entry.command.includes("/gsd doctor")))
 
     const serialized = JSON.stringify(payload)
     assert.doesNotMatch(serialized, /sk-test-recovery-secret-9999|sk-onboarding-secret-1234/)
     assert.doesNotMatch(serialized, /Crash Recovery Briefing|Completed Tool Calls|toolCallId/)
+  } finally {
+    await bridge.resetBridgeServiceForTests()
+    fixture.cleanup()
+  }
+})
+
+test("/api/recovery prefers the current-project resumable session when the live bridge session is out of scope", async () => {
+  const fixture = makeRecoveryFixture()
+  const sessionPath = createRecoverySessionFile(fixture.projectCwd, fixture.sessionsDir, "sess-recovery")
+  const externalSessionPath = join(fixture.projectCwd, "..", "agent-sessions", "2026-03-15T03-40-00-000Z_sess-external.jsonl")
+  const harness = createHarness((command, current) => {
+    if (command.type === "get_state") {
+      current.emit({
+        id: command.id,
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: fakeSessionState("sess-external", externalSessionPath),
+      })
+      return
+    }
+    assert.fail(`unexpected command: ${command.type}`)
+  })
+
+  bridge.configureBridgeServiceForTests({
+    env: {
+      ...process.env,
+      GSD_WEB_PROJECT_CWD: fixture.projectCwd,
+      GSD_WEB_PROJECT_SESSIONS_DIR: fixture.sessionsDir,
+      GSD_WEB_PACKAGE_ROOT: repoRoot,
+    },
+    spawn: harness.spawn,
+    getOnboardingState: async () => readyOnboardingState(),
+  })
+
+  try {
+    const response = await recoveryRoute.GET()
+    assert.equal(response.status, 200)
+    const payload = await response.json() as any
+
+    assert.equal(payload.project.activeSessionPath, sessionPath)
+    assert.equal(payload.project.activeSessionId, "sess-recovery")
+    assert.equal(payload.interruptedRun.detected, true)
+    assert.match(payload.interruptedRun.lastError ?? "", /\[redacted\]/)
+    assert.deepEqual(
+      payload.actions.browser.map((action: { id: string }) => action.id),
+      ["refresh_diagnostics", "refresh_workspace", "open_retry_controls", "open_resume_controls"],
+    )
   } finally {
     await bridge.resetBridgeServiceForTests()
     fixture.cleanup()
@@ -319,8 +369,10 @@ test("/api/recovery returns a structured empty-project payload without leaking r
     assert.equal(payload.validation.total, 0)
     assert.ok(typeof payload.doctor.total === "number")
     assert.ok(typeof payload.interruptedRun.available === "boolean")
-    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "refresh_diagnostics"))
-    assert.ok(payload.actions.browser.some((action: { id: string }) => action.id === "refresh_workspace"))
+    assert.deepEqual(
+      payload.actions.browser.map((action: { id: string }) => action.id),
+      ["refresh_diagnostics", "refresh_workspace"],
+    )
   } finally {
     await bridge.resetBridgeServiceForTests()
     fixture.cleanup()

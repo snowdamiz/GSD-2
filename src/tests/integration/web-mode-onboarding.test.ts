@@ -1,8 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawn, execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -10,11 +9,13 @@ import { StringDecoder } from "node:string_decoder";
 
 import { chromium } from "playwright";
 
+import {
+  killProcessOnPort,
+  launchPackagedWebHost,
+  waitForHttpOk,
+} from "./web-mode-runtime-harness.ts";
+
 const repoRoot = process.cwd();
-const resolveTsPath = join(repoRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs");
-const loaderPath = join(repoRoot, "src", "loader.ts");
-const builtAgentEntryPath = join(repoRoot, "packages", "pi-coding-agent", "dist", "index.js");
-const packagedWebHostPath = join(repoRoot, "dist", "web", "standalone", "server.js");
 
 const bridge = await import("../../web/bridge-service.ts");
 const onboarding = await import("../../web/onboarding-service.ts");
@@ -292,173 +293,6 @@ function configureBridgeRuntime(
   };
 }
 
-let runtimeArtifactsReady = false;
-
-function createBrowserOpenStub(binDir: string, logPath: string): void {
-  const command = process.platform === "darwin" ? "open" : "xdg-open";
-  const script = `#!/bin/sh\nprintf '%s\n' "$1" >> "${logPath}"\nexit 0\n`;
-  const scriptPath = join(binDir, command);
-  writeFileSync(scriptPath, script, "utf-8");
-  chmodSync(scriptPath, 0o755);
-}
-
-function runNpmScript(args: string[], label: string): void {
-  try {
-    execFileSync("npm", args, {
-      cwd: repoRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string; message: string };
-    throw new Error(`${label} failed: ${failure.message}\n${failure.stdout ?? ""}\n${failure.stderr ?? ""}`.trim());
-  }
-}
-
-function ensureRuntimeArtifacts(): void {
-  if (runtimeArtifactsReady) return;
-
-  if (!existsSync(builtAgentEntryPath)) {
-    runNpmScript(["run", "build:pi"], "npm run build:pi");
-  }
-
-  if (!existsSync(packagedWebHostPath)) {
-    runNpmScript(["run", "build:web-host"], "npm run build:web-host");
-  }
-
-  runtimeArtifactsReady = true;
-}
-
-function parseStartedUrl(stderr: string): string {
-  const match = stderr.match(/\[gsd\] Web mode startup: status=started[^\n]*url=(http:\/\/[^\s]+)/);
-  if (!match) {
-    throw new Error(`Did not find successful web startup line in stderr:\n${stderr}`);
-  }
-  return match[1];
-}
-
-type RuntimeLaunchResult = {
-  exitCode: number | null;
-  stderr: string;
-  stdout: string;
-  url: string;
-  port: number;
-};
-
-async function launchWebModeForBrowserOnboarding(tempHome: string, browserLogPath: string): Promise<RuntimeLaunchResult> {
-  ensureRuntimeArtifacts();
-
-  mkdirSync(join(tempHome, ".gsd"), { recursive: true });
-  const fakeBin = join(tempHome, "fake-bin");
-  mkdirSync(fakeBin, { recursive: true });
-  createBrowserOpenStub(fakeBin, browserLogPath);
-
-  return await new Promise<RuntimeLaunchResult>((resolve, reject) => {
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-
-    const child = spawn(
-      process.execPath,
-      ["--import", resolveTsPath, "--experimental-strip-types", loaderPath, "--web"],
-      {
-        cwd: repoRoot,
-        env: {
-          ...process.env,
-          HOME: tempHome,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          CI: "1",
-          FORCE_COLOR: "0",
-          GSD_WEB_TEST_FAKE_API_KEY_VALIDATION: "1",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-
-    const finish = (result: RuntimeLaunchResult | Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (result instanceof Error) {
-        reject(result);
-        return;
-      }
-      resolve(result);
-    };
-
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish(new Error(`Timed out waiting for gsd --web to exit. stderr so far:\n${stderr}`));
-    }, 90_000);
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-
-    child.once("error", (error) => finish(error));
-    child.once("close", (code) => {
-      try {
-        const url = parseStartedUrl(stderr);
-        const parsed = new URL(url);
-        finish({
-          exitCode: code,
-          stderr,
-          stdout,
-          url,
-          port: Number(parsed.port),
-        });
-      } catch (error) {
-        finish(error as Error);
-      }
-    });
-  });
-}
-
-async function waitForHttpOk(url: string, timeoutMs = 60_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown = null;
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url, { method: "GET", signal: AbortSignal.timeout(5_000) });
-      if (response.ok) return;
-      lastError = new Error(`Unexpected ${response.status} for ${url}`);
-    } catch (error) {
-      lastError = error;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  throw new Error(`Timed out waiting for ${url}: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
-}
-
-async function killProcessOnPort(port: number): Promise<void> {
-  try {
-    const output = execFileSync("lsof", ["-ti", `tcp:${port}`], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-
-    for (const pid of output.split(/\s+/).filter(Boolean)) {
-      try {
-        process.kill(Number(pid), "SIGTERM");
-      } catch {
-        // Best-effort cleanup only.
-      }
-    }
-  } catch {
-    // No listener found or lsof unavailable.
-  }
-}
 
 test("successful browser onboarding restarts the stale bridge child and unlocks the first prompt", async () => {
   const fixture = makeWorkspaceFixture();
@@ -601,7 +435,14 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
 
   try {
-    const launch = await launchWebModeForBrowserOnboarding(tempHome, browserLogPath);
+    const launch = await launchPackagedWebHost({
+      launchCwd: repoRoot,
+      tempHome,
+      browserLogPath,
+      env: {
+        GSD_WEB_TEST_FAKE_API_KEY_VALIDATION: "1",
+      },
+    });
     port = launch.port;
 
     assert.equal(launch.exitCode, 0, `expected the web launcher to exit cleanly:\n${launch.stderr}`);

@@ -1,335 +1,867 @@
 import test from "node:test"
 import assert from "node:assert/strict"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
-import { spawn, execFileSync } from "node:child_process"
+import { mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 
-import { chromium, type Page } from "playwright"
+import { chromium, type Page, type Request as PlaywrightRequest, type Response as PlaywrightResponse } from "playwright"
 
-const projectRoot = process.cwd()
-const resolveTsPath = join(projectRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs")
-const loaderPath = join(projectRoot, "src", "loader.ts")
-const builtAgentEntryPath = join(projectRoot, "packages", "pi-coding-agent", "dist", "index.js")
-const packagedWebHostPath = join(projectRoot, "dist", "web", "standalone", "server.js")
+import { getProjectSessionsDir } from "../../cli-web-branch.ts"
+import {
+  makeInterruptedRunRuntimeFixture,
+  makeRuntimeWorkspaceFixture,
+  seedCurrentProjectSession,
+  seedInterruptedRunRecoverySessions,
+} from "./web-mode-runtime-fixtures.ts"
+import {
+  assertBrowserOpenAttempt,
+  killProcessOnPort,
+  launchPackagedWebHost,
+  waitForLaunchedHostReady,
+  writePreseededAuthFile,
+} from "./web-mode-runtime-harness.ts"
 
-const cliWeb = await import("../../cli-web-branch.ts")
-
-let runtimeArtifactsReady = false
-
-type LaunchResult = {
-  exitCode: number | null
-  stderr: string
-  stdout: string
-  url: string
-  port: number
+type RuntimeBootPayload = {
+  project: { cwd: string; sessionsDir: string }
+  workspace: { active: { milestoneId?: string; sliceId?: string; phase?: string } }
+  bridge: { phase: string; activeSessionId?: string }
 }
 
-/**
- * Pre-populate a fake Anthropic API key in the temp home's auth.json so the
- * onboarding service sees a configured provider and unlocks without requiring
- * a real browser-based setup flow. The bridge agent ignores the key until an
- * actual LLM call is made, so get_state and boot readiness are unaffected.
- */
-function writePreseededAuthFile(tempHome: string): void {
-  const agentDir = join(tempHome, ".gsd", "agent")
-  mkdirSync(agentDir, { recursive: true, mode: 0o700 })
-  const authPath = join(agentDir, "auth.json")
-  const fakeCredential = { type: "api_key", key: "sk-ant-test-fake-key-for-runtime-test" }
-  writeFileSync(authPath, JSON.stringify({ anthropic: fakeCredential }, null, 2), { encoding: "utf-8", mode: 0o600 })
+type BridgeStatusEvent = {
+  type: string
+  bridge: { phase: string; activeSessionId: string; connectionCount: number }
 }
 
-function createBrowserOpenStub(binDir: string, logPath: string): void {
-  const command = process.platform === "darwin" ? "open" : "xdg-open"
-  const script = `#!/bin/sh\nprintf '%s\n' "$1" >> "${logPath}"\nexit 0\n`
-  const scriptPath = join(binDir, command)
-  writeFileSync(scriptPath, script, "utf-8")
-  chmodSync(scriptPath, 0o755)
+function canonicalizePath(path: string): string {
+  return realpathSync.native?.(path) ?? realpathSync(path)
 }
 
-function runNpmScript(args: string[], label: string): void {
+function expectedRuntimeSessionsDirs(projectCwd: string, tempHome: string): string[] {
+  const cwdVariants = [projectCwd, canonicalizePath(projectCwd)]
+  const baseDirs = [join(tempHome, ".gsd", "sessions"), join(tempHome, ".gsd", "agent", "sessions")]
+  return [...new Set(cwdVariants.flatMap((cwd) => baseDirs.map((baseDir) => getProjectSessionsDir(cwd, baseDir))))]
+}
+
+function parseCommandRequest(request: PlaywrightRequest): Record<string, unknown> | null {
+  const body = request.postData()
+  if (!body) return null
+
   try {
-    execFileSync("npm", args, {
-      cwd: projectRoot,
-      encoding: "utf-8",
-      env: {
-        ...process.env,
-        PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1",
-      },
-      stdio: ["ignore", "pipe", "pipe"],
-    })
-  } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string; message: string }
-    throw new Error(`${label} failed: ${failure.message}\n${failure.stdout ?? ""}\n${failure.stderr ?? ""}`.trim())
+    return JSON.parse(body) as Record<string, unknown>
+  } catch {
+    return null
   }
 }
 
-function ensureRuntimeArtifacts(): void {
-  if (runtimeArtifactsReady) return
-
-  if (!existsSync(builtAgentEntryPath)) {
-    runNpmScript(["run", "build:pi"], "npm run build:pi")
-  }
-
-  if (!existsSync(packagedWebHostPath)) {
-    runNpmScript(["run", "build:web-host"], "npm run build:web-host")
-  }
-
-  runtimeArtifactsReady = true
+async function submitTerminalInput(page: Page, input: string): Promise<void> {
+  const field = page.locator('[data-testid="terminal-command-input"]')
+  await field.fill(input)
+  await field.press("Enter")
 }
 
-function parseStartedUrl(stderr: string): string {
-  const match = stderr.match(/\[gsd\] Web mode startup: status=started[^\n]*url=(http:\/\/[^\s]+)/)
-  if (!match) {
-    throw new Error(`Did not find successful web startup line in stderr:\n${stderr}`)
-  }
-  return match[1]
-}
+async function closeCommandSurfaceIfOpen(page: Page, label = "command surface"): Promise<void> {
+  const surface = page.locator('[data-testid="command-surface"]')
+  const isVisible = await surface.isVisible().catch(() => false)
+  if (!isVisible) return
 
-async function launchWebModeFromProject(tempHome: string, browserLogPath: string): Promise<LaunchResult> {
-  ensureRuntimeArtifacts()
-
-  const fakeBin = join(tempHome, "fake-bin")
-  execFileSync("mkdir", ["-p", fakeBin])
-  createBrowserOpenStub(fakeBin, browserLogPath)
-
-  return await new Promise<LaunchResult>((resolve, reject) => {
-    let stdout = ""
-    let stderr = ""
-    let settled = false
-
-    const child = spawn(
-      process.execPath,
-      ["--import", resolveTsPath, "--experimental-strip-types", loaderPath, "--web"],
-      {
-        cwd: projectRoot,
-        env: {
-          ...process.env,
-          HOME: tempHome,
-          PATH: `${fakeBin}:${process.env.PATH || ""}`,
-          CI: "1",
-          FORCE_COLOR: "0",
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    )
-
-    const finish = (result: LaunchResult | Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      if (result instanceof Error) {
-        reject(result)
-        return
-      }
-      resolve(result)
-    }
-
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM")
-      finish(new Error(`Timed out waiting for gsd --web to exit. stderr so far:\n${stderr}`))
-    }, 180_000)
-
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString()
-    })
-
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString()
-    })
-
-    child.once("error", (error) => finish(error))
-    child.once("close", (code) => {
-      try {
-        const url = parseStartedUrl(stderr)
-        const parsed = new URL(url)
-        finish({
-          exitCode: code,
-          stderr,
-          stdout,
-          url,
-          port: Number(parsed.port),
-        })
-      } catch (error) {
-        finish(error as Error)
-      }
-    })
+  await surface.getByRole("button", { name: "Close" }).first().click()
+  await page.waitForSelector('[data-testid="command-surface"]', { state: "hidden", timeout: 15_000 }).catch(async () => {
+    const title = await page.locator('[data-testid="command-surface-title"]').textContent().catch(() => null)
+    assert.fail(`${label}: expected the command surface to close, but it stayed visible with title ${title ?? "unknown"}`)
   })
 }
 
-async function readFirstSseEventInPage(page: Page, timeoutMs = 15_000): Promise<Record<string, unknown>> {
-  return await page.evaluate(
-    async ({ timeoutMs }) => {
-      return await new Promise<Record<string, unknown>>((resolve, reject) => {
-        const source = new EventSource("/api/session/events")
-        const timer = window.setTimeout(() => {
-          source.close()
-          reject(new Error("Timed out waiting for the first SSE event"))
-        }, timeoutMs)
-
-        source.onmessage = (event) => {
-          window.clearTimeout(timer)
-          source.close()
-          try {
-            resolve(JSON.parse(event.data) as Record<string, unknown>)
-          } catch (error) {
-            reject(error instanceof Error ? error : new Error(String(error)))
-          }
-        }
-
-        source.onerror = () => {
-          window.clearTimeout(timer)
-          source.close()
-          reject(new Error("EventSource failed before the first SSE payload"))
-        }
-      })
-    },
-    { timeoutMs },
-  )
-}
-
-async function killProcessOnPort(port: number): Promise<void> {
+async function waitForTerminalLine(page: Page, needle: string, label: string, timeoutMs = 20_000): Promise<void> {
   try {
-    // Use -sTCP:LISTEN to match only the listening server process, not client
-    // sockets from this test process or the Playwright browser. Killing client
-    // PIDs would send SIGTERM to the test worker itself and abort the run.
-    const output = execFileSync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim()
-
-    for (const pid of output.split(/\s+/).filter(Boolean)) {
-      // Guard: never kill ourselves.
-      if (Number(pid) === process.pid) continue
-      try {
-        process.kill(Number(pid), "SIGTERM")
-      } catch {
-        // Best-effort cleanup only.
-      }
-    }
+    await page.waitForFunction(
+      ({ needle }) =>
+        Array.from(document.querySelectorAll('[data-testid="terminal-line"]')).some((node) =>
+          node.textContent?.includes(needle),
+        ),
+      { needle },
+      { timeout: timeoutMs },
+    )
   } catch {
-    // No listener found or lsof unavailable.
+    const lines = await page.locator('[data-testid="terminal-line"]').allTextContents().catch(() => [])
+    assert.fail(`${label}: expected a terminal line containing ${JSON.stringify(needle)}, got ${JSON.stringify(lines.slice(-12))}`)
   }
 }
 
-test("gsd --web launches the live host and the shell attaches to boot plus SSE state", async (t) => {
+async function waitForCommandResponse(
+  page: Page,
+  options: {
+    label: string
+    type: string
+    message?: string
+    status?: number
+    action: () => Promise<void>
+  },
+): Promise<PlaywrightResponse> {
+  const expectedStatus = options.status ?? 200
+  const responsePromise = page.waitForResponse(
+    (response) => {
+      if (new URL(response.url()).pathname !== "/api/session/command") return false
+      if (response.request().method() !== "POST") return false
+      if (response.status() !== expectedStatus) return false
+
+      const body = parseCommandRequest(response.request())
+      if (!body || body.type !== options.type) return false
+      if (options.message !== undefined) {
+        return body.message === options.message
+      }
+      return true
+    },
+    { timeout: 20_000 },
+  )
+
+  await options.action()
+
+  try {
+    return await responsePromise
+  } catch {
+    assert.fail(`${options.label}: never observed /api/session/command type=${options.type} status=${expectedStatus}`)
+  }
+}
+
+async function waitForGetResponse(
+  page: Page,
+  options: {
+    label: string
+    pathname: string
+    status?: number
+    action: () => Promise<void>
+  },
+): Promise<PlaywrightResponse> {
+  const expectedStatus = options.status ?? 200
+  const responsePromise = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === options.pathname && response.request().method() === "GET" && response.status() === expectedStatus,
+    { timeout: 20_000 },
+  )
+
+  await options.action()
+
+  try {
+    return await responsePromise
+  } catch {
+    assert.fail(`${options.label}: never observed GET ${options.pathname} status=${expectedStatus}`)
+  }
+}
+
+type RuntimeRecoveryPayload = {
+  status: "ready" | "unavailable"
+  project: {
+    cwd: string
+    activeScope: string | null
+    activeSessionPath: string | null
+    activeSessionId: string | null
+  }
+  summary: {
+    label: string
+    detail: string
+    currentUnitId: string | null
+  }
+  doctor: {
+    total: number
+  }
+  interruptedRun: {
+    available: boolean
+    detected: boolean
+    counts: {
+      toolCalls: number
+      filesWritten: number
+      commandsRun: number
+      errors: number
+    }
+    unit: {
+      type: string
+      id: string
+    } | null
+    lastError: string | null
+  }
+  actions: {
+    browser: Array<{ id: string; label: string }>
+    commands: Array<{ command: string; label: string }>
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+async function waitForJsonGetResponse<T>(
+  page: Page,
+  options: {
+    label: string
+    pathname: string
+    status?: number
+    action: () => Promise<void>
+  },
+): Promise<T> {
+  const response = await waitForGetResponse(page, options)
+
+  try {
+    return await response.json() as T
+  } catch {
+    assert.fail(`${options.label}: GET ${options.pathname} did not return JSON`)
+  }
+}
+
+function assertRecoveryPayload(
+  payload: RuntimeRecoveryPayload,
+  options: {
+    label: string
+    expectedScope: string
+    expectedSessionId: string
+    leakedSecret: string
+  },
+): void {
+  assert.equal(payload.status, "ready", `${options.label}: expected recovery payload status=ready`)
+  assert.equal(payload.project.activeScope, options.expectedScope, `${options.label}: recovery active scope drifted`)
+  assert.equal(payload.project.activeSessionId, options.expectedSessionId, `${options.label}: recovery active session drifted`)
+  assert.equal(payload.interruptedRun.available, true, `${options.label}: interrupted-run evidence should be available`)
+  assert.equal(payload.interruptedRun.detected, true, `${options.label}: interrupted-run evidence should be detected`)
+  assert.ok(payload.interruptedRun.counts.toolCalls >= 3, `${options.label}: expected tool-call evidence in interrupted-run counts`)
+  assert.ok(payload.interruptedRun.counts.filesWritten >= 1, `${options.label}: expected file-write evidence in interrupted-run counts`)
+  assert.ok(payload.interruptedRun.counts.commandsRun >= 1, `${options.label}: expected command evidence in interrupted-run counts`)
+  assert.ok(payload.interruptedRun.counts.errors >= 1, `${options.label}: expected error evidence in interrupted-run counts`)
+  assert.match(payload.interruptedRun.lastError ?? "", /\[redacted\]/, `${options.label}: last interrupted-run error should stay redacted`)
+  assert.doesNotMatch(payload.interruptedRun.lastError ?? "", new RegExp(escapeRegExp(options.leakedSecret)))
+
+  const browserActionIds = payload.actions.browser.map((action) => action.id)
+  assert.ok(browserActionIds.includes("refresh_diagnostics"), `${options.label}: missing refresh_diagnostics action`)
+  assert.ok(browserActionIds.includes("refresh_workspace"), `${options.label}: missing refresh_workspace action`)
+  assert.ok(browserActionIds.includes("open_resume_controls"), `${options.label}: missing open_resume_controls action`)
+  assert.ok(
+    payload.actions.commands.some((command) => command.command.includes("/gsd doctor")),
+    `${options.label}: expected a scoped /gsd doctor command suggestion`,
+  )
+}
+
+async function assertRecoveryPanel(
+  page: Page,
+  options: {
+    label: string
+    expectedScope: string
+    leakedSecret: string
+  },
+): Promise<void> {
+  await page.waitForSelector('[data-testid="command-surface-recovery-actions"]', { state: "visible", timeout: 20_000 })
+
+  const stateText = (await page.locator('[data-testid="command-surface-recovery-state"]').textContent()) ?? ""
+  const summaryText = (await page.locator('[data-testid="command-surface-recovery-summary"]').textContent()) ?? ""
+  const interruptedRunText = (await page.locator('[data-testid="command-surface-recovery-interrupted-run"]').textContent()) ?? ""
+  const actionsText = (await page.locator('[data-testid="command-surface-recovery-actions"]').textContent()) ?? ""
+  const commandsText = (await page.locator('[data-testid="command-surface-recovery-commands"]').textContent()) ?? ""
+  const panelText = (await page.locator('[data-testid="command-surface-recovery"]').textContent()) ?? ""
+  const actionIds = await page.locator('[data-testid^="command-surface-recovery-action-"]').evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute("data-testid") ?? ""),
+  )
+
+  assert.ok(stateText.trim().length > 0, `${options.label}: recovery state marker was empty`)
+  assert.match(summaryText, new RegExp(escapeRegExp(options.expectedScope)), `${options.label}: recovery summary lost the seeded scope`)
+  assert.match(interruptedRunText, /Available:\s*yes/, `${options.label}: interrupted-run availability marker drifted`)
+  assert.match(interruptedRunText, /Detected:\s*yes/, `${options.label}: interrupted-run detection marker drifted`)
+  assert.match(interruptedRunText, /Tool calls:\s*[1-9]/, `${options.label}: interrupted-run tool-call count was not visible`)
+  assert.match(interruptedRunText, /Files written:\s*[1-9]/, `${options.label}: interrupted-run file-write count was not visible`)
+  assert.match(interruptedRunText, /Commands:\s*[1-9]/, `${options.label}: interrupted-run command count was not visible`)
+  assert.match(interruptedRunText, /Errors:\s*[1-9]/, `${options.label}: interrupted-run error count was not visible`)
+  assert.match(interruptedRunText, /Last forensic error:\s*.*\[redacted\]/, `${options.label}: forensic error did not stay redacted`)
+  assert.match(actionsText, /Refresh diagnostics/, `${options.label}: recovery actions lost refresh diagnostics`)
+  assert.match(actionsText, /Open resume controls/, `${options.label}: recovery actions lost resume controls`)
+  assert.match(commandsText, /\/gsd doctor/, `${options.label}: recovery commands lost scoped doctor guidance`)
+  assert.ok(
+    actionIds.includes("command-surface-recovery-action-refresh_diagnostics"),
+    `${options.label}: refresh_diagnostics button test id was missing`,
+  )
+  assert.ok(
+    actionIds.includes("command-surface-recovery-action-open_resume_controls"),
+    `${options.label}: open_resume_controls button test id was missing`,
+  )
+  assert.doesNotMatch(panelText, new RegExp(escapeRegExp(options.leakedSecret)), `${options.label}: recovery panel leaked a seeded secret`)
+  assert.doesNotMatch(panelText, /Crash Recovery Briefing|Completed Tool Calls|toolCallId/, `${options.label}: recovery panel leaked raw transcript forensics`)
+}
+
+async function openResumeControlsFromRecovery(
+  page: Page,
+  options: {
+    label: string
+    expectedSessionName: string
+    expectedAlternateSessionName: string
+  },
+): Promise<void> {
+  await waitForGetResponse(page, {
+    label: `${options.label} session browser load`,
+    pathname: "/api/session/browser",
+    action: () => page.locator('[data-testid="command-surface-recovery-action-open_resume_controls"]').click(),
+  })
+  await assertCommandSurfaceOpen(page, {
+    label: `${options.label} session browser surface`,
+    title: "Resume",
+    kind: "/resume",
+    panelTestId: "command-surface-resume",
+  })
+
+  const metaText = (await page.locator('[data-testid="command-surface-session-browser-meta"]').textContent()) ?? ""
+  const resultsText = (await page.locator('[data-testid="command-surface-session-browser-results"]').textContent()) ?? ""
+  const resultCount = await page.locator('[data-testid^="command-surface-session-browser-item-"]').count()
+  assert.match(metaText, /current-project sessions/i, `${options.label}: session browser lost current-project metadata`)
+  assert.ok(resultCount >= 2, `${options.label}: expected at least two seeded current-project session results`)
+  assert.match(resultsText, new RegExp(escapeRegExp(options.expectedSessionName)), `${options.label}: missing interrupted-run session result`)
+  assert.match(resultsText, new RegExp(escapeRegExp(options.expectedAlternateSessionName)), `${options.label}: missing alternate recovery session result`)
+}
+
+async function assertCommandSurfaceOpen(
+  page: Page,
+  options: {
+    label: string
+    title: string
+    kind: string
+    panelTestId: string
+  },
+): Promise<void> {
+  try {
+    await page.waitForSelector('[data-testid="command-surface"]', { state: "visible", timeout: 20_000 })
+    await page.waitForSelector(`[data-testid="${options.panelTestId}"]`, { state: "visible", timeout: 20_000 })
+  } catch {
+    const title = await page.locator('[data-testid="command-surface-title"]').textContent().catch(() => null)
+    const kind = await page.locator('[data-testid="command-surface-kind"]').textContent().catch(() => null)
+    assert.fail(
+      `${options.label}: expected ${options.panelTestId} to become visible, got title=${title ?? "none"} kind=${kind ?? "none"}`,
+    )
+  }
+
+  const title = await page.locator('[data-testid="command-surface-title"]').textContent()
+  const kind = await page.locator('[data-testid="command-surface-kind"]').textContent()
+  assert.equal(title, options.title, `${options.label}: wrong command-surface title`)
+  assert.equal(kind?.trim(), options.kind, `${options.label}: wrong command-surface kind badge`)
+}
+
+test("gsd --web survives page reload and page reopen without losing current-project truth", async (t) => {
   if (process.platform === "win32") {
     t.skip("runtime launch test uses POSIX browser-open stubs")
     return
   }
 
+  const launchCwd = process.cwd()
   const tempRoot = mkdtempSync(join(tmpdir(), "gsd-web-runtime-"))
   const tempHome = join(tempRoot, "home")
-  const browserLogPath = join(tempRoot, "browser-open.log")
   let port: number | null = null
   let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
 
   try {
-    // Pre-seed auth so the onboarding service sees a configured provider and
-    // unlocks without a browser-based setup flow. The bridge agent ignores the
-    // fake key until an actual LLM call is made.
     writePreseededAuthFile(tempHome)
 
-    const launch = await launchWebModeFromProject(tempHome, browserLogPath)
+    const launch = await launchPackagedWebHost({
+      launchCwd,
+      tempHome,
+    })
     port = launch.port
 
     assert.equal(launch.exitCode, 0, `expected the web launcher to exit cleanly:\n${launch.stderr}`)
     assert.match(launch.stderr, /status=started/, "expected a started diagnostic line on stderr")
     assert.ok(launch.stdout.trim().length === 0, `web launch should not emit interactive stdout: ${launch.stdout}`)
+    await assertBrowserOpenAttempt(launch.browserLogPath, launch.url)
 
+    const expectedProjectCwd = canonicalizePath(launchCwd)
+    const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
     browser = await chromium.launch({ headless: true })
+
     const page = await browser.newPage()
-    await page.goto(launch.url, { waitUntil: "load" })
-
-    const bootResult = await page.evaluate(async () => {
-      const response = await fetch("/api/boot", {
-        method: "GET",
-        headers: {
-          Accept: "application/json",
-        },
-      })
-
-      return {
-        ok: response.ok,
-        status: response.status,
-        boot: await response.json(),
-      }
+    const initial = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
+      label: "initial repo-root attach",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => page.goto(launch.url, { waitUntil: "load" }),
     })
-    assert.equal(bootResult.ok, true, `expected boot endpoint to respond successfully: ${bootResult.status}`)
 
-    const boot = bootResult.boot as {
-      project: { cwd: string; sessionsDir: string }
-      workspace: { active: { milestoneId?: string; sliceId?: string; phase?: string } }
-      bridge: { phase: string; activeSessionId?: string }
+    assert.match(initial.bootResult.boot.workspace.active.milestoneId ?? "", /^M\d+$/, "expected a live active milestone id")
+    if ((initial.bootResult.boot.workspace.active.sliceId ?? "").length > 0) {
+      assert.match(initial.bootResult.boot.workspace.active.sliceId ?? "", /^S\d+$/)
     }
-    assert.equal(boot.project.cwd, projectRoot)
-    assert.equal(boot.project.sessionsDir, cliWeb.getProjectSessionsDir(projectRoot, join(tempHome, ".gsd", "sessions")))
-    assert.match(boot.workspace.active.milestoneId ?? "", /^M\d+$/, "expected a live active milestone id")
-    if ((boot.workspace.active.sliceId ?? "").length > 0) {
-      assert.match(boot.workspace.active.sliceId ?? "", /^S\d+$/)
-    }
-    assert.equal(typeof boot.workspace.active.phase, "string")
-    assert.ok((boot.workspace.active.phase ?? "").length > 0, "expected a non-empty active workspace phase")
-    assert.equal(boot.bridge.phase, "ready")
-    assert.equal(typeof boot.bridge.activeSessionId, "string")
-    assert.ok((boot.bridge.activeSessionId ?? "").length > 0, "expected the bridge to attach a session during boot")
+    assert.equal(typeof initial.bootResult.boot.workspace.active.phase, "string")
+    assert.ok((initial.bootResult.boot.workspace.active.phase ?? "").length > 0, "expected a non-empty active workspace phase")
 
-    const firstEvent = await readFirstSseEventInPage(page)
-    const bridgeEvent = firstEvent as {
-      type: string
-      bridge: { phase: string; activeSessionId: string; connectionCount: number }
-    }
-    assert.equal(bridgeEvent.type, "bridge_status")
-    assert.equal(bridgeEvent.bridge.phase, "ready")
-    assert.equal(typeof bridgeEvent.bridge.activeSessionId, "string")
-    assert.ok(bridgeEvent.bridge.connectionCount >= 1, "expected an active SSE subscriber count")
+    const initialScope = initial.visible.scopeLabel ?? ""
+    const initialSessionId = initial.bootResult.boot.bridge.activeSessionId ?? ""
+    const initialEvent = initial.firstEvent as BridgeStatusEvent
+    assert.equal(initialEvent.bridge.activeSessionId, initialSessionId, "initial attach should agree on the active session id")
 
-    await page.waitForFunction(
-      () => {
-        const node = document.querySelector('[data-testid="workspace-connection-status"]')
-        return Boolean(node?.textContent?.includes("Bridge connected"))
-      },
-      null,
-      { timeout: 60_000 },
-    )
-    await page.waitForFunction(
-      () => {
-        const node = document.querySelector('[data-testid="sidebar-current-scope"]')
-        return Boolean(node?.textContent?.match(/M\d+(?:\/S\d+(?:\/T\d+)?)?/))
-      },
-      null,
-      { timeout: 60_000 },
-    )
-    await page.waitForFunction(
-      () => {
-        const node = document.querySelector('[data-testid="terminal-session-banner"]')
-        return Boolean(node && !node.textContent?.includes("Waiting for live session"))
-      },
-      null,
-      { timeout: 60_000 },
-    )
+    const reloaded = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
+      label: "reload reconnect continuity",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => page.reload({ waitUntil: "load" }),
+    })
+    const reloadEvent = reloaded.firstEvent as BridgeStatusEvent
+    assert.equal(reloaded.bootResult.boot.bridge.activeSessionId, initialSessionId, "reload should preserve the active session id")
+    assert.equal(reloadEvent.bridge.activeSessionId, initialSessionId, "reload SSE attach should report the same active session id")
+    assert.equal(reloaded.visible.scopeLabel, initialScope, "reload should preserve the same visible workspace scope")
+    assert.equal(reloaded.visible.projectPathTitle, expectedProjectCwd, "reload should preserve the visible project path")
 
-    const connectionStatus = await page.locator('[data-testid="workspace-connection-status"]').textContent()
-    const scopeLabel = await page.locator('[data-testid="sidebar-current-scope"]').textContent()
-    const unitLabel = await page.locator('[data-testid="status-bar-unit"]').textContent()
+    await page.close()
 
-    assert.match(connectionStatus ?? "", /Bridge connected/)
-    assert.match(scopeLabel ?? "", /M\d+(?:\/S\d+(?:\/T\d+)?)?/)
-    assert.match(unitLabel ?? "", /M\d+(?:\/S\d+(?:\/T\d+)?)?|project\s+—/)
-
-    await page.locator('[data-testid="dashboard-recovery-summary-entrypoint"]').click()
-    await page.waitForSelector('[data-testid="command-surface-recovery"]', { timeout: 60_000 })
-    const recoveryState = await page.locator('[data-testid="command-surface-recovery-state"]').textContent()
-    assert.ok(recoveryState && recoveryState.length > 0, "expected the recovery diagnostics panel to expose a visible load state")
-
-    assert.ok(existsSync(browserLogPath), "expected the launcher to attempt opening the browser")
-    const openedUrls = readFileSync(browserLogPath, "utf-8")
-    assert.match(openedUrls, new RegExp(launch.url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")))
+    const reopenedPage = await browser.newPage()
+    const reopened = await waitForLaunchedHostReady<RuntimeBootPayload>(reopenedPage, {
+      label: "new page reopen continuity",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => reopenedPage.goto(launch.url, { waitUntil: "load" }),
+    })
+    const reopenEvent = reopened.firstEvent as BridgeStatusEvent
+    assert.equal(reopened.bootResult.boot.bridge.activeSessionId, initialSessionId, "page reopen should preserve the active session id")
+    assert.equal(reopenEvent.bridge.activeSessionId, initialSessionId, "page reopen SSE attach should report the same active session id")
+    assert.equal(reopened.visible.scopeLabel, initialScope, "page reopen should preserve the same visible workspace scope")
+    assert.equal(reopened.visible.projectPathTitle, expectedProjectCwd, "page reopen should preserve the visible project path")
   } finally {
     await browser?.close().catch(() => undefined)
     if (port !== null) {
       await killProcessOnPort(port)
     }
     rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test("real packaged browser shell keeps daily-use slash and click controls live", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("runtime launch test uses POSIX browser-open stubs")
+    return
+  }
+
+  const launchCwd = process.cwd()
+  const tempRoot = mkdtempSync(join(tmpdir(), "gsd-web-runtime-parity-"))
+  const tempHome = join(tempRoot, "home")
+  let port: number | null = null
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
+
+  try {
+    writePreseededAuthFile(tempHome)
+    seedCurrentProjectSession({
+      projectCwd: launchCwd,
+      baseSessionsDir: join(tempHome, ".gsd", "sessions"),
+      sessionId: "sess-parity-seeded",
+      name: "Seeded Browser Session",
+      baseTimestamp: "2026-03-15T03:10:00.000Z",
+    })
+
+    const launch = await launchPackagedWebHost({
+      launchCwd,
+      tempHome,
+    })
+    port = launch.port
+
+    assert.equal(launch.exitCode, 0, `expected the web launcher to exit cleanly:\n${launch.stderr}`)
+    assert.match(launch.stderr, /status=started/, "expected a started diagnostic line on stderr")
+    await assertBrowserOpenAttempt(launch.browserLogPath, launch.url)
+
+    const expectedProjectCwd = canonicalizePath(launchCwd)
+    const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
+    browser = await chromium.launch({ headless: true })
+    const page = await browser.newPage()
+
+    await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
+      label: "daily-use browser parity attach",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => page.goto(launch.url, { waitUntil: "load" }),
+    })
+
+    await assertCommandSurfaceOpen(page, {
+      label: "dashboard recovery entrypoint",
+      title: "Settings",
+      kind: "/settings",
+      panelTestId: "command-surface-recovery",
+    })
+    await page.waitForSelector('[data-testid="command-surface-recovery-actions"]', { state: "visible", timeout: 20_000 })
+    await waitForGetResponse(page, {
+      label: "dashboard recovery refresh action",
+      pathname: "/api/recovery",
+      action: () => page.locator('[data-testid="command-surface-recovery-action-refresh_diagnostics"]').click(),
+    })
+    await page.waitForSelector('[data-testid="command-surface-recovery-state"]', { state: "visible", timeout: 20_000 })
+    await closeCommandSurfaceIfOpen(page, "dashboard recovery entrypoint")
+
+    await waitForCommandResponse(page, {
+      label: "/new built-in execution",
+      type: "new_session",
+      action: () => submitTerminalInput(page, "/new"),
+    })
+    await waitForTerminalLine(page, "Started a new session", "/new built-in execution")
+
+    await submitTerminalInput(page, "/share")
+    await waitForTerminalLine(page, "blocked instead of falling through to the model", "/share reject notice")
+
+    await waitForCommandResponse(page, {
+      label: "/model browser surface",
+      type: "get_available_models",
+      action: () => submitTerminalInput(page, "/model"),
+    })
+    await assertCommandSurfaceOpen(page, {
+      label: "/model browser surface",
+      title: "Model",
+      kind: "/model",
+      panelTestId: "command-surface-models",
+    })
+    await page.waitForSelector('[data-testid="command-surface-apply-model"]', { state: "visible", timeout: 20_000 })
+    await closeCommandSurfaceIfOpen(page, "/model browser surface")
+
+    await submitTerminalInput(page, "/thinking")
+    await assertCommandSurfaceOpen(page, {
+      label: "/thinking browser surface",
+      title: "Thinking",
+      kind: "/thinking",
+      panelTestId: "command-surface-thinking",
+    })
+    await page.waitForSelector('[data-testid="command-surface-apply-thinking"]', { state: "visible", timeout: 20_000 })
+    await closeCommandSurfaceIfOpen(page, "/thinking browser surface")
+
+    await waitForGetResponse(page, {
+      label: "/resume browser surface",
+      pathname: "/api/session/browser",
+      action: () => submitTerminalInput(page, "/resume"),
+    })
+    await assertCommandSurfaceOpen(page, {
+      label: "/resume browser surface",
+      title: "Resume",
+      kind: "/resume",
+      panelTestId: "command-surface-resume",
+    })
+    assert.match(
+      (await page.locator('[data-testid="command-surface-session-browser-meta"]').textContent()) ?? "",
+      /current-project sessions/i,
+      "/resume browser surface: expected current-project session-browser metadata",
+    )
+    const resumeResultCount = await page.locator('[data-testid^="command-surface-session-browser-item-"]').count()
+    assert.ok(resumeResultCount >= 1, "/resume browser surface: expected at least one current-project session result")
+    await closeCommandSurfaceIfOpen(page, "/resume browser surface")
+
+    await waitForCommandResponse(page, {
+      label: "/fork browser surface",
+      type: "get_fork_messages",
+      action: () => submitTerminalInput(page, "/fork"),
+    })
+    await assertCommandSurfaceOpen(page, {
+      label: "/fork browser surface",
+      title: "Fork",
+      kind: "/fork",
+      panelTestId: "command-surface-fork",
+    })
+    await page.waitForSelector('[data-testid="command-surface-apply-fork"]', { state: "visible", timeout: 20_000 })
+    const forkResultText = (await page.locator('[data-testid="command-surface-result"]').textContent().catch(() => null)) ?? ""
+    const forkPanelText = (await page.locator('[data-testid="command-surface-fork"]').textContent()) ?? ""
+    const forkOptionCount = await page.locator('[data-testid="command-surface-fork"] button').count()
+    assert.ok(
+      /Loaded \d+ fork points\.|No fork points are available yet\./.test(forkResultText) ||
+        forkPanelText.includes("No user messages are available for forking yet.") ||
+        forkOptionCount >= 1,
+      "/fork browser surface: expected an explicit empty state, a loaded result notice, or visible fork options",
+    )
+    await closeCommandSurfaceIfOpen(page, "/fork browser surface")
+
+    await waitForCommandResponse(page, {
+      label: "/session browser surface",
+      type: "get_session_stats",
+      action: () => submitTerminalInput(page, "/session"),
+    })
+    await assertCommandSurfaceOpen(page, {
+      label: "/session browser surface",
+      title: "Session",
+      kind: "/session",
+      panelTestId: "command-surface-session",
+    })
+    await page.waitForSelector('[data-testid="command-surface-export-session"]', { state: "visible", timeout: 20_000 })
+    assert.match(
+      (await page.locator('[data-testid="command-surface-result"]').textContent()) ?? "",
+      /Loaded session details for /,
+      "/session browser surface: expected a visible loaded-session notice",
+    )
+    await closeCommandSurfaceIfOpen(page, "/session browser surface")
+
+    await submitTerminalInput(page, "/compact preserve the open blockers")
+    await assertCommandSurfaceOpen(page, {
+      label: "/compact browser surface",
+      title: "Compact",
+      kind: "/compact",
+      panelTestId: "command-surface-compact",
+    })
+    assert.equal(
+      await page.locator('[data-testid="command-surface-compact-instructions"]').inputValue(),
+      "preserve the open blockers",
+      "/compact browser surface: expected slash args to seed the custom instructions field",
+    )
+    await closeCommandSurfaceIfOpen(page, "/compact browser surface")
+
+    await submitTerminalInput(page, "/settings")
+    await assertCommandSurfaceOpen(page, {
+      label: "/settings browser surface",
+      title: "Settings",
+      kind: "/settings",
+      panelTestId: "command-surface-models",
+    })
+    await page.locator('[data-testid="command-surface-section-auth"]').click()
+    await page.waitForSelector('[data-testid="command-surface-auth"]', { state: "visible", timeout: 20_000 })
+    await closeCommandSurfaceIfOpen(page, "/settings browser surface")
+
+    await page.locator('[data-testid="sidebar-settings-button"]').click()
+    await assertCommandSurfaceOpen(page, {
+      label: "sidebar settings click",
+      title: "Settings",
+      kind: "/settings",
+      panelTestId: "command-surface-models",
+    })
+    await closeCommandSurfaceIfOpen(page, "sidebar settings click")
+
+    await submitTerminalInput(page, "/login")
+    await assertCommandSurfaceOpen(page, {
+      label: "/login browser surface",
+      title: "Login",
+      kind: "/login",
+      panelTestId: "command-surface-auth",
+    })
+    await page.waitForSelector('[data-testid="command-surface-logout-provider"]', { state: "visible", timeout: 20_000 })
+    await closeCommandSurfaceIfOpen(page, "/login browser surface")
+
+    await submitTerminalInput(page, "/logout")
+    await assertCommandSurfaceOpen(page, {
+      label: "/logout browser surface",
+      title: "Logout",
+      kind: "/logout",
+      panelTestId: "command-surface-auth",
+    })
+    await page.waitForSelector('[data-testid="command-surface-logout-provider"]', { state: "visible", timeout: 20_000 })
+    await closeCommandSurfaceIfOpen(page, "/logout browser surface")
+
+    await waitForGetResponse(page, {
+      label: "sidebar git click",
+      pathname: "/api/git",
+      action: () => page.locator('[data-testid="sidebar-git-button"]').click(),
+    })
+    await assertCommandSurfaceOpen(page, {
+      label: "sidebar git click",
+      title: "Git",
+      kind: "/git",
+      panelTestId: "command-surface-git-summary",
+    })
+    assert.ok(
+      ((await page.locator('[data-testid="command-surface-git-state"]').textContent()) ?? "").trim().length > 0,
+      "sidebar git click: expected a visible git-state summary",
+    )
+    await closeCommandSurfaceIfOpen(page, "sidebar git click")
+
+    await waitForGetResponse(page, {
+      label: "sidebar recovery entrypoint",
+      pathname: "/api/recovery",
+      action: () => page.locator('[data-testid="sidebar-recovery-summary-entrypoint"]').click(),
+    })
+    await assertCommandSurfaceOpen(page, {
+      label: "sidebar recovery entrypoint",
+      title: "Settings",
+      kind: "/settings",
+      panelTestId: "command-surface-recovery",
+    })
+    await page.waitForSelector('[data-testid="command-surface-recovery-action-refresh_diagnostics"]', { state: "visible", timeout: 20_000 })
+    await waitForGetResponse(page, {
+      label: "sidebar recovery refresh action",
+      pathname: "/api/recovery",
+      action: () => page.locator('[data-testid="command-surface-recovery-action-refresh_diagnostics"]').click(),
+    })
+    await page.waitForSelector('[data-testid="command-surface-recovery-state"]', { state: "visible", timeout: 20_000 })
+  } finally {
+    await browser?.close().catch(() => undefined)
+    if (port !== null) {
+      await killProcessOnPort(port)
+    }
+    rmSync(tempRoot, { recursive: true, force: true })
+  }
+})
+
+test("real packaged browser recovery stays redacted and actionable for a seeded interrupted-run project across reload and reopen", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("runtime launch test uses POSIX browser-open stubs")
+    return
+  }
+
+  const fixture = makeInterruptedRunRuntimeFixture()
+  const tempRoot = mkdtempSync(join(tmpdir(), "gsd-web-runtime-recovery-home-"))
+  const tempHome = join(tempRoot, "home")
+  let port: number | null = null
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
+
+  try {
+    writePreseededAuthFile(tempHome)
+    const seeded = seedInterruptedRunRecoverySessions({
+      projectCwd: fixture.projectCwd,
+      baseSessionsDir: join(tempHome, ".gsd", "sessions"),
+    })
+
+    const launch = await launchPackagedWebHost({
+      launchCwd: fixture.projectCwd,
+      tempHome,
+    })
+    port = launch.port
+
+    assert.equal(launch.exitCode, 0, `expected the recovery fixture web launcher to exit cleanly:\n${launch.stderr}`)
+    assert.match(launch.stderr, /status=started/, "expected a started diagnostic line on stderr for the recovery fixture launch")
+    await assertBrowserOpenAttempt(launch.browserLogPath, launch.url)
+
+    const expectedProjectCwd = canonicalizePath(fixture.projectCwd)
+    const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
+    browser = await chromium.launch({ headless: true })
+    const page = await browser.newPage()
+
+    const initial = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
+      label: "seeded interrupted-run cold start",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => page.goto(launch.url, { waitUntil: "load" }),
+    })
+    assert.match(initial.visible.scopeLabel ?? "", new RegExp(escapeRegExp(fixture.expectedScope)), "cold start should expose the seeded recovery scope")
+    await assertRecoveryPanel(page, {
+      label: "initial seeded recovery diagnostics",
+      expectedScope: fixture.expectedScope,
+      leakedSecret: seeded.leakedSecret,
+    })
+    const initialRecovery = await waitForJsonGetResponse<RuntimeRecoveryPayload>(page, {
+      label: "initial seeded recovery refresh",
+      pathname: "/api/recovery",
+      action: () => page.locator('[data-testid="command-surface-recovery-action-refresh_diagnostics"]').click(),
+    })
+    assertRecoveryPayload(initialRecovery, {
+      label: "initial seeded recovery refresh",
+      expectedScope: fixture.expectedScope,
+      expectedSessionId: seeded.activeSession.sessionId,
+      leakedSecret: seeded.leakedSecret,
+    })
+    await openResumeControlsFromRecovery(page, {
+      label: "initial seeded recovery",
+      expectedSessionName: seeded.activeSession.name,
+      expectedAlternateSessionName: seeded.alternateSession.name,
+    })
+    await closeCommandSurfaceIfOpen(page, "initial seeded recovery")
+
+    const reloaded = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
+      label: "seeded interrupted-run reload",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => page.reload({ waitUntil: "load" }),
+    })
+    await assertRecoveryPanel(page, {
+      label: "reloaded seeded recovery diagnostics",
+      expectedScope: fixture.expectedScope,
+      leakedSecret: seeded.leakedSecret,
+    })
+    const reloadedRecovery = await waitForJsonGetResponse<RuntimeRecoveryPayload>(page, {
+      label: "reloaded seeded recovery refresh",
+      pathname: "/api/recovery",
+      action: () => page.locator('[data-testid="command-surface-recovery-action-refresh_diagnostics"]').click(),
+    })
+    assertRecoveryPayload(reloadedRecovery, {
+      label: "reloaded seeded recovery refresh",
+      expectedScope: fixture.expectedScope,
+      expectedSessionId: seeded.activeSession.sessionId,
+      leakedSecret: seeded.leakedSecret,
+    })
+    await openResumeControlsFromRecovery(page, {
+      label: "reloaded seeded recovery",
+      expectedSessionName: seeded.activeSession.name,
+      expectedAlternateSessionName: seeded.alternateSession.name,
+    })
+    await closeCommandSurfaceIfOpen(page, "reloaded seeded recovery")
+
+    await page.close()
+
+    const reopenedPage = await browser.newPage()
+    const reopened = await waitForLaunchedHostReady<RuntimeBootPayload>(reopenedPage, {
+      label: "seeded interrupted-run reopen",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => reopenedPage.goto(launch.url, { waitUntil: "load" }),
+    })
+    await assertRecoveryPanel(reopenedPage, {
+      label: "reopened seeded recovery diagnostics",
+      expectedScope: fixture.expectedScope,
+      leakedSecret: seeded.leakedSecret,
+    })
+    const reopenedRecovery = await waitForJsonGetResponse<RuntimeRecoveryPayload>(reopenedPage, {
+      label: "reopened seeded recovery refresh",
+      pathname: "/api/recovery",
+      action: () => reopenedPage.locator('[data-testid="command-surface-recovery-action-refresh_diagnostics"]').click(),
+    })
+    assertRecoveryPayload(reopenedRecovery, {
+      label: "reopened seeded recovery refresh",
+      expectedScope: fixture.expectedScope,
+      expectedSessionId: seeded.activeSession.sessionId,
+      leakedSecret: seeded.leakedSecret,
+    })
+    await openResumeControlsFromRecovery(reopenedPage, {
+      label: "reopened seeded recovery",
+      expectedSessionName: seeded.activeSession.name,
+      expectedAlternateSessionName: seeded.alternateSession.name,
+    })
+    await closeCommandSurfaceIfOpen(reopenedPage, "reopened seeded recovery")
+  } finally {
+    await browser?.close().catch(() => undefined)
+    if (port !== null) {
+      await killProcessOnPort(port)
+    }
+    rmSync(tempRoot, { recursive: true, force: true })
+    fixture.cleanup()
+  }
+})
+
+test("shared launched-host harness can target a seeded fixture cwd instead of silently reusing repo root", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("runtime launch test uses POSIX browser-open stubs")
+    return
+  }
+
+  const fixture = makeRuntimeWorkspaceFixture()
+  const tempRoot = mkdtempSync(join(tmpdir(), "gsd-web-runtime-fixture-home-"))
+  const tempHome = join(tempRoot, "home")
+  let port: number | null = null
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null
+
+  try {
+    writePreseededAuthFile(tempHome)
+
+    const launch = await launchPackagedWebHost({
+      launchCwd: fixture.projectCwd,
+      tempHome,
+    })
+    port = launch.port
+
+    assert.equal(launch.exitCode, 0, `expected the fixture web launcher to exit cleanly:\n${launch.stderr}`)
+    assert.match(launch.stderr, /status=started/, "expected a started diagnostic line on stderr for the fixture launch")
+    await assertBrowserOpenAttempt(launch.browserLogPath, launch.url)
+
+    const expectedProjectCwd = canonicalizePath(fixture.projectCwd)
+    const expectedSessionsDirs = expectedRuntimeSessionsDirs(expectedProjectCwd, tempHome)
+    browser = await chromium.launch({ headless: true })
+    const page = await browser.newPage()
+    const fixtureProof = await waitForLaunchedHostReady<RuntimeBootPayload>(page, {
+      label: "fixture cwd cold start",
+      expectedProjectCwd,
+      expectedSessionsDir: expectedSessionsDirs,
+      launchStderr: launch.stderr,
+      navigation: () => page.goto(launch.url, { waitUntil: "load" }),
+    })
+
+    assert.notEqual(fixtureProof.bootResult.boot.project.cwd, process.cwd(), "fixture launch should not fall back to the repo-root project cwd")
+    assert.match(fixtureProof.visible.scopeLabel ?? "", new RegExp(escapeRegExp(fixture.expectedScope)), "fixture launch should expose the seeded fixture scope")
+    const fixtureEvent = fixtureProof.firstEvent as BridgeStatusEvent
+    assert.equal(fixtureEvent.bridge.phase, "ready")
+  } finally {
+    await browser?.close().catch(() => undefined)
+    if (port !== null) {
+      await killProcessOnPort(port)
+    }
+    rmSync(tempRoot, { recursive: true, force: true })
+    fixture.cleanup()
   }
 })

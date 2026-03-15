@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process"
 import { existsSync } from "node:fs"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 
 import {
   collectCurrentProjectOnboardingState,
@@ -106,6 +106,34 @@ function recoveryUnitFromWorkspace(workspace: Awaited<ReturnType<typeof collectS
     return { type: "execute-slice", id: scope }
   }
   return { type: "execute-milestone", id: scope }
+}
+
+function selectRecoverySessionFile(
+  activeSessionFile: string | null | undefined,
+  resumableSessions: Array<{ id: string; path: string }>,
+): string | null {
+  if (!activeSessionFile) {
+    return resumableSessions[0]?.path ?? null
+  }
+
+  const normalizedActiveSessionFile = resolve(activeSessionFile)
+  const matchingCurrentProjectSession = resumableSessions.find((session) => resolve(session.path) === normalizedActiveSessionFile)
+  if (matchingCurrentProjectSession) {
+    return matchingCurrentProjectSession.path
+  }
+
+  return resumableSessions[0]?.path ?? activeSessionFile
+}
+
+function selectRecoverySessionId(
+  activeSessionId: string | null | undefined,
+  sessionFile: string | null,
+  resumableSessions: Array<{ id: string; path: string }>,
+): string | null {
+  if (!sessionFile) return activeSessionId ?? null
+
+  const normalizedSessionFile = resolve(sessionFile)
+  return resumableSessions.find((session) => resolve(session.path) === normalizedSessionFile)?.id ?? activeSessionId ?? null
 }
 
 function summarizeSeverityCounts(issues: Array<{ severity: RecoveryDiagnosticsSeverity }>): {
@@ -496,7 +524,8 @@ export async function collectCurrentProjectRecoveryDiagnostics(
 
   const activeScope = activeScopeFromWorkspace(workspace)
   const unit = recoveryUnitFromWorkspace(workspace)
-  const sessionFile = bridgeSnapshot.activeSessionFile ?? resumableSessions?.[0]?.path ?? null
+  const sessionFile = selectRecoverySessionFile(bridgeSnapshot.activeSessionFile, resumableSessions)
+  const recoverySessionId = selectRecoverySessionId(bridgeSnapshot.activeSessionId, sessionFile, resumableSessions)
   const recoveryChild = await collectRecoveryDiagnosticsChildPayload(
     config.packageRoot,
     config.projectCwd,
@@ -593,7 +622,7 @@ export async function collectCurrentProjectRecoveryDiagnostics(
       cwd: config.projectCwd,
       activeScope,
       activeSessionPath: sessionFile,
-      activeSessionId: bridgeSnapshot.activeSessionId,
+      activeSessionId: recoverySessionId,
     },
     summary: {
       tone: summary.tone,

@@ -14,18 +14,20 @@ Guidelines:
 
 ## Active
 
+- none
+
+## Validated
+
 ### R011 — Remaining lower-frequency TUI capabilities reach browser parity after the primary loop
 - Class: core-capability
-- Status: active
+- Status: validated
 - Description: After the primary browser-first loop is real, the remaining lower-frequency TUI capabilities should be brought into browser parity as needed for daily use.
 - Why it matters: The stated goal is full parity with what the TUI can do, not just a browser path for the main happy path.
 - Source: user
 - Primary owning slice: M002/S01
 - Supporting slices: M002/S02, M002/S03, M002/S04
-- Validation: mapped
-- Notes: S01 proved safe browser slash-command dispatch plus RPC-backed/browser-surface outcomes for the daily-use built-ins in scope. S02 added current-project session browse/resume/rename parity, daily-use settings/auth controls, a real Git sidebar surface, and browser-visible title/widget/editor shell state. S03 added targeted live freshness, narrow invalidation-driven reloads, and browser-native recovery diagnostics; only S04’s final assembled runtime proof remains before this requirement can validate.
-
-## Validated
+- Validation: verified by `src/tests/integration/web-mode-runtime.test.ts`, `src/tests/integration/web-mode-onboarding.test.ts`, `src/tests/integration/web-mode-assembled.test.ts`, `src/tests/web-command-parity-contract.test.ts`, `src/tests/web-session-parity-contract.test.ts`, `src/tests/web-live-state-contract.test.ts`, `src/tests/web-recovery-diagnostics-contract.test.ts`, `npm run build:web-host`, and the real packaged-host browser proof of refresh/reopen, daily-use browser controls, and seeded interrupted-run recovery.
+- Notes: S01 proved safe browser slash-command dispatch plus RPC-backed/browser-surface outcomes for the daily-use built-ins in scope. S02 added current-project session browse/resume/rename parity, daily-use settings/auth controls, a real Git sidebar surface, and browser-visible title/widget/editor shell state. S03 added targeted live freshness, narrow invalidation-driven reloads, and browser-native recovery diagnostics. S04 completed the real packaged-host refresh/reopen/daily-use/interrupted-run browser proof and closed the remaining runtime risk.
 
 ### R001 — Browser-only `--web` launch path
 - Class: launchability
@@ -221,7 +223,7 @@ Guidelines:
 | R008 | constraint | validated | M001/S04 | M001/S07 | validated |
 | R009 | quality-attribute | validated | M001/S06 | M001/S01, M001/S03, M001/S04, M001/S05, M001/S07 | validated |
 | R010 | failure-visibility | validated | M001/S06 | M001/S03, M001/S04, M001/S07 | validated |
-| R011 | core-capability | active | M002/S01 | M002/S02, M002/S03, M002/S04 | mapped |
+| R011 | core-capability | validated | M002/S01 | M002/S02, M002/S03, M002/S04 | validated |
 | R020 | admin/support | deferred | none | none | unmapped |
 | R021 | operability | deferred | none | none | unmapped |
 | R022 | operability | deferred | none | none | unmapped |
@@ -231,7 +233,7 @@ Guidelines:
 
 ## Coverage Summary
 
-- Active requirements: 1
-- Mapped to concrete M002 slices: 1
-- Validated: 10
+- Active requirements: 0
+- Mapped to concrete M002 slices: 0
+- Validated: 11
 - Unmapped active requirements: 0
