@@ -5,7 +5,7 @@ import { loadFile, parsePlan, parseRoadmap, parseSummary, saveFile, parseTaskPla
 import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, milestonesDir, gsdRoot, relMilestoneFile, relSliceFile, relTaskFile, relSlicePath, relGsdRootFile, resolveGsdRootFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
-import { listWorktrees } from "./worktree-manager.js";
+import { listWorktrees, resolveGitDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { RUNTIME_EXCLUSION_PATHS } from "./git-service.js";
 import { nativeIsRepo, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
@@ -481,7 +481,7 @@ async function checkGitHealth(
     return; // Not a git repo — skip all git health checks
   }
 
-  const gitDir = join(basePath, ".git");
+  const gitDir = resolveGitDir(basePath);
 
   // ── Orphaned auto-worktrees & Stale milestone branches ────────────────
   // These checks only apply in worktree/branch modes — skip in none mode
