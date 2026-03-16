@@ -61,6 +61,7 @@
     "gsd": "node scripts/dev-cli.js",
     "gsd:web": "node scripts/build-web-if-stale.cjs && node scripts/dev-cli.js --web",
     "gsd:web:stop": "node scripts/dev-cli.js web stop",
+    "gsd:web:stop:all": "node scripts/dev-cli.js web stop all",
     "postinstall": "node scripts/link-workspace-packages.cjs && node scripts/postinstall.js",
     "pi:install-global": "node scripts/install-pi-global.js",
     "pi:uninstall-global": "node scripts/uninstall-pi-global.js",
