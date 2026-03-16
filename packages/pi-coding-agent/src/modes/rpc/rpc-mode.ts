@@ -273,8 +273,11 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		},
 	});
 
-	// Set up extensions with RPC-based UI context
-	await session.bindExtensions({
+	// Set up extensions with RPC-based UI context.
+	// Do not block the initial RPC handshake on extension session_start hooks:
+	// browser boot only needs get_state, and several startup-only notifications
+	// (MCP availability, web-search status, etc.) can complete in the background.
+	void session.bindExtensions({
 		uiContext: createExtensionUIContext(),
 		commandContextActions: {
 			waitForIdle: () => session.agent.waitForIdle(),
@@ -310,6 +313,12 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		onError: (err) => {
 			output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
 		},
+	}).catch((error) => {
+		output({
+			type: "extension_error",
+			event: "session_start",
+			error: error instanceof Error ? error.message : String(error),
+		});
 	});
 
 	// Output all agent events as JSON

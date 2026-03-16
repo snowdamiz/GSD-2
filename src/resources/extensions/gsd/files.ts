@@ -18,7 +18,7 @@ import type {
   ManifestStatus,
 } from './types.js';
 
-import { checkExistingEnvKeys } from '../env-key-utils.js';
+import { checkExistingEnvKeys } from '../shared/env-key-utils.js';
 import { parseRoadmapSlices } from './roadmap-slices.js';
 import { nativeParseRoadmap, nativeExtractSection, NATIVE_UNAVAILABLE } from './native-parser-bridge.js';
 

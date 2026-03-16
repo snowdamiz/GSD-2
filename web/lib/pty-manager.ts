@@ -7,7 +7,7 @@
 
 import { chmodSync, existsSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join, dirname } from "node:path";
+import { basename, join, dirname } from "node:path";
 import type { IPty } from "node-pty";
 
 export interface PtySession {
@@ -18,12 +18,13 @@ export interface PtySession {
 }
 
 interface LoadedNodePty {
-  module: typeof import("node-pty");
+  nodePtyModule: typeof import("node-pty");
   packageRoot: string;
 }
 
 // Use globalThis to persist across Turbopack/HMR module re-evaluations in dev
 const GLOBAL_KEY = "__gsd_pty_sessions__" as const;
+const CLEANUP_GUARD_KEY = "__gsd_pty_cleanup_installed__" as const;
 
 function getSessions(): Map<string, PtySession> {
   const g = globalThis as Record<string, unknown>;
@@ -33,6 +34,44 @@ function getSessions(): Map<string, PtySession> {
   return g[GLOBAL_KEY] as Map<string, PtySession>;
 }
 
+function destroyAllSessions(): void {
+  const map = getSessions();
+  for (const [sessionId, session] of map.entries()) {
+    session.alive = false;
+    try {
+      session.pty.kill();
+    } catch {
+      // Already dead.
+    }
+    session.listeners.clear();
+    map.delete(sessionId);
+  }
+}
+
+function ensureProcessCleanupHandlers(): void {
+  const g = globalThis as Record<string, unknown>;
+  if (g[CLEANUP_GUARD_KEY]) return;
+  g[CLEANUP_GUARD_KEY] = true;
+
+  const cleanup = () => {
+    destroyAllSessions();
+  };
+
+  process.once("exit", cleanup);
+  process.once("SIGINT", () => {
+    cleanup();
+    process.exit(130);
+  });
+  process.once("SIGTERM", () => {
+    cleanup();
+    process.exit(143);
+  });
+  process.once("SIGHUP", () => {
+    cleanup();
+    process.exit(129);
+  });
+}
+
 function getDefaultShell(): string {
   if (process.platform === "win32") return "powershell.exe";
   return process.env.SHELL || "/bin/zsh";
@@ -40,6 +79,14 @@ function getDefaultShell(): string {
 
 function getProjectCwd(): string {
   return process.env.GSD_WEB_PROJECT_CWD || process.cwd();
+}
+
+function getShellArgs(shell: string): string[] {
+  const shellName = basename(shell).toLowerCase();
+  if (shellName === "zsh") return ["-f"];
+  if (shellName === "bash") return ["--noprofile", "--norc"];
+  if (shellName === "fish") return ["--no-config"];
+  return [];
 }
 
 function getNodePtyCandidateRoots(): string[] {
@@ -85,8 +132,8 @@ function loadNodePty(): LoadedNodePty {
         continue;
       }
 
-      const module = requireFromRoot("node-pty") as typeof import("node-pty");
-      return { module, packageRoot };
+      const nodePtyModule = requireFromRoot("node-pty") as typeof import("node-pty");
+      return { nodePtyModule, packageRoot };
     } catch (error) {
       failures.push(
         `${root}: ${error instanceof Error ? error.message : String(error)}`,
@@ -100,6 +147,7 @@ function loadNodePty(): LoadedNodePty {
 }
 
 export function getOrCreateSession(sessionId: string): PtySession {
+  ensureProcessCleanupHandlers();
   const map = getSessions();
   const existing = map.get(sessionId);
   if (existing?.alive) return existing;
@@ -109,7 +157,7 @@ export function getOrCreateSession(sessionId: string): PtySession {
     map.delete(sessionId);
   }
 
-  const { module: pty, packageRoot: nodePtyRoot } = loadNodePty();
+  const { nodePtyModule: pty, packageRoot: nodePtyRoot } = loadNodePty();
 
   // Ensure the spawn-helper binary is executable (npm doesn't always preserve permissions)
   try {
@@ -143,10 +191,17 @@ export function getOrCreateSession(sessionId: string): PtySession {
   }
   cleanEnv.TERM = "xterm-256color";
   cleanEnv.COLORTERM = "truecolor";
+  cleanEnv.HISTFILE = "/dev/null";
+  cleanEnv.HISTSIZE = "0";
+  cleanEnv.SAVEHIST = "0";
+  cleanEnv.LESSHISTFILE = "/dev/null";
+  cleanEnv.NODE_REPL_HISTORY = "/dev/null";
+
+  const shellArgs = getShellArgs(shell);
 
   let ptyProcess: IPty;
   try {
-    ptyProcess = pty.spawn(shell, ["-l"], {
+    ptyProcess = pty.spawn(shell, shellArgs, {
       name: "xterm-256color",
       cols: 120,
       rows: 30,

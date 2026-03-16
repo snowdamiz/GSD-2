@@ -22,6 +22,7 @@ import type {
   WorkspaceOnboardingFlowState,
   WorkspaceOnboardingProviderState,
   WorkspaceOnboardingRequestState,
+  WorkspaceOnboardingState,
   WorkspaceOnboardingValidationResult,
 } from "@/lib/gsd-workspace-store"
 
@@ -31,7 +32,7 @@ interface StepAuthenticateProps {
   lastValidation: WorkspaceOnboardingValidationResult | null
   requestState: WorkspaceOnboardingRequestState
   requestProviderId: string | null
-  onSaveApiKey: (providerId: string, apiKey: string) => void
+  onSaveApiKey: (providerId: string, apiKey: string) => Promise<WorkspaceOnboardingState | null>
   onStartFlow: (providerId: string) => void
   onSubmitFlowInput: (flowId: string, input: string) => void
   onCancelFlow: (flowId: string) => void
@@ -145,10 +146,13 @@ export function StepAuthenticate({
           <CardContent>
             <form
               className="space-y-4"
-              onSubmit={(event) => {
+              onSubmit={async (event) => {
                 event.preventDefault()
                 if (!apiKey.trim()) return
-                onSaveApiKey(provider.id, apiKey)
+                const next = await onSaveApiKey(provider.id, apiKey)
+                if (next && !next.locked && (next.bridgeAuthRefresh.phase === "succeeded" || next.bridgeAuthRefresh.phase === "idle")) {
+                  onNext()
+                }
               }}
             >
               <Field>

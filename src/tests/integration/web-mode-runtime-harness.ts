@@ -221,22 +221,37 @@ export async function waitForHttpOk(url: string, timeoutMs = 60_000): Promise<vo
 }
 
 export async function killProcessOnPort(port: number): Promise<void> {
-  try {
-    const output = execFileSync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim()
-
-    for (const pid of output.split(/\s+/).filter(Boolean)) {
-      if (Number(pid) === process.pid) continue
-      try {
-        process.kill(Number(pid), "SIGTERM")
-      } catch {
-        // Best-effort cleanup only.
-      }
+  const readListenerPids = (): number[] => {
+    try {
+      const output = execFileSync("lsof", ["-ti", `:${port}`, "-sTCP:LISTEN"], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim()
+      return output
+        .split(/\s+/)
+        .filter(Boolean)
+        .map((pid) => Number(pid))
+        .filter((pid) => Number.isFinite(pid) && pid !== process.pid)
+    } catch {
+      return []
     }
-  } catch {
-    // No listener found or lsof unavailable.
+  }
+
+  const initialPids = readListenerPids()
+  for (const pid of initialPids) {
+    try {
+      process.kill(pid, "SIGTERM")
+    } catch {
+      // Best-effort cleanup only.
+    }
+  }
+
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    if (readListenerPids().length === 0) {
+      return
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100))
   }
 }
 

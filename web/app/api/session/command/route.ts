@@ -31,13 +31,13 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const response = await sendBridgeInput(payload as any);
+    const response = await sendBridgeInput(payload as Parameters<typeof sendBridgeInput>[0]);
     if (response === null) {
       return Response.json({ ok: true }, { status: 202 });
     }
 
     return Response.json(response, {
-      status: responseStatus(response as { success: boolean; code?: string }),
+      status: responseStatus(response),
       headers: {
         "Cache-Control": "no-store",
       },

@@ -301,7 +301,7 @@ export interface WorkspaceBootPayload {
   onboardingNeeded: boolean
   resumableSessions: BootResumableSession[]
   bridge: BridgeRuntimeSnapshot
-  projectDetection: ProjectDetection
+  projectDetection?: ProjectDetection
 }
 
 export interface BridgeStatusEvent {
@@ -3748,7 +3748,7 @@ export class GSDWorkspaceStore {
       }
 
       let nextBoot = this.state.boot
-      let nextLive: WorkspaceLiveState = {
+      const nextLive: WorkspaceLiveState = {
         ...this.state.live,
         freshness: { ...this.state.live.freshness },
       }

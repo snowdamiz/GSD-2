@@ -28,6 +28,7 @@ import {
   getCurrentBranch,
   getCurrentSlice,
   getLiveAutoDashboard,
+  getLiveResumableSessions,
   getLiveWorkspaceIndex,
   getModelLabel,
   type WorkspaceTerminalLine,
@@ -120,13 +121,21 @@ interface DashboardProps {
 
 export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {}) {
   const state = useGSDWorkspaceState()
-  const { sendCommand } = useGSDWorkspaceActions()
+  const {
+    sendCommand,
+    submitInput,
+    switchSessionFromSurface,
+    openCommandSurface,
+    setCommandSurfaceSection,
+  } = useGSDWorkspaceActions()
   const [milestoneDialogOpen, setMilestoneDialogOpen] = useState(false)
   const boot = state.boot
   const workspace = getLiveWorkspaceIndex(state)
   const auto = getLiveAutoDashboard(state)
+  const resumableSessions = getLiveResumableSessions(state)
   const bridge = boot?.bridge ?? null
   const freshness = state.live.freshness
+  const recoverySummary = state.live.recoverySummary
 
   const activeToolExecution = state.activeToolExecution
   const streamingAssistantText = state.streamingAssistantText
@@ -139,6 +148,8 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const doneTasks = currentSlice?.tasks.filter((t) => t.done).length ?? 0
   const totalTasks = currentSlice?.tasks.length ?? 0
   const progressPercent = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0
+  const recentSessions = resumableSessions.slice(0, 3)
+  const activeSessionPath = bridge?.activeSessionFile ?? bridge?.sessionState?.sessionFile ?? null
 
   const scopeLabel = getCurrentScopeLabel(workspace)
   const branch = getCurrentBranch(workspace)
@@ -161,6 +172,21 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const handleWorkflowAction = (command: string) => {
     void sendCommand(buildPromptCommand(command, bridge))
     onExpandTerminal?.()
+  }
+
+  const handleNewSession = async () => {
+    await submitInput("/new")
+    onExpandTerminal?.()
+  }
+
+  const handleSwitchSession = async (session: { path: string }) => {
+    await switchSessionFromSurface(session.path)
+    onExpandTerminal?.()
+  }
+
+  const handleOpenRecovery = () => {
+    openCommandSurface("settings", { source: "dashboard" })
+    setCommandSurfaceSection("recovery")
   }
 
   const handlePrimaryAction = () => {
@@ -476,9 +502,51 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
                     </div>
                   </div>
                 </div>
+                <div className="border-t border-border px-4 py-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <h3 className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Sessions</h3>
+                    <button
+                      type="button"
+                      onClick={() => void handleNewSession()}
+                      className="rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
+                    >
+                      New
+                    </button>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {recentSessions.length > 0 ? (
+                      recentSessions.map((session) => {
+                        const isActiveSession = session.path === activeSessionPath || session.isActive
+                        return (
+                          <button
+                            key={session.path}
+                            type="button"
+                            onClick={() => void handleSwitchSession(session)}
+                            disabled={isActiveSession}
+                            className={cn(
+                              "flex w-full items-center gap-2.5 rounded border border-border px-3 py-2 text-left transition-colors",
+                              isActiveSession ? "bg-accent text-foreground" : "bg-background hover:bg-accent",
+                            )}
+                          >
+                            <span className={cn("h-2 w-2 shrink-0 rounded-full", isActiveSession ? "bg-success" : "bg-muted-foreground/40")} />
+                            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                              {session.name || session.id}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-muted-foreground">
+                              {isActiveSession ? "active" : formatRelativeTime(session.modifiedAt)}
+                            </span>
+                          </button>
+                        )
+                      })
+                    ) : (
+                      <p className="text-xs text-muted-foreground">No resumable sessions yet.</p>
+                    )}
+                  </div>
+                </div>
+
                 {/* Live signals — only shown when active */}
                 {(activeToolExecution || streamingAssistantText.length > 0) && (
-                  <div className="p-3 space-y-1.5">
+                  <div className="border-t border-border p-3 space-y-1.5">
                     {activeToolExecution && (
                       <div
                         className="flex items-center gap-2.5 rounded border border-border bg-accent px-3 py-2"
@@ -504,7 +572,47 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
               </div>
             )}
 
-
+            {!isConnecting && recoverySummary.visible && (
+              <div className="rounded-md border border-border bg-card">
+                <div className="border-b border-border px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recovery</h2>
+                      <p className="mt-1 text-sm font-medium text-foreground">{recoverySummary.label}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleOpenRecovery}
+                      className="rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+                      data-testid="dashboard-recovery-summary-entrypoint"
+                    >
+                      {recoverySummary.entrypointLabel}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-3 px-4 py-3">
+                  <p className="text-xs text-muted-foreground" data-testid="dashboard-recovery-summary-state">{recoverySummary.detail}</p>
+                  <div
+                    className="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-xs"
+                    data-testid="dashboard-retry-freshness"
+                  >
+                    <span className="text-muted-foreground">Retry / compaction</span>
+                    <span className="font-medium text-foreground">
+                      {recoverySummary.retryInProgress
+                        ? `Retry ${Math.max(1, recoverySummary.retryAttempt)}`
+                        : recoverySummary.isCompacting
+                          ? "Compacting"
+                          : recoverySummary.freshness}
+                    </span>
+                  </div>
+                  {recoverySummary.lastError && (
+                    <div className="rounded-md border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs text-red-400">
+                      {recoverySummary.lastError.phase}: {recoverySummary.lastError.message}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

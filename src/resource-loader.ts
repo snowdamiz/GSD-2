@@ -1,6 +1,6 @@
 import { DefaultResourceLoader } from '@gsd/pi-coding-agent'
 import { homedir } from 'node:os'
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -18,8 +18,10 @@ const srcResources = join(packageRoot, 'src', 'resources')
 const resourcesDir = existsSync(distResources) ? distResources : srcResources
 const bundledExtensionsDir = join(resourcesDir, 'extensions')
 
+const NON_EXTENSION_FILES = new Set(['env-key-utils.ts', 'env-key-utils.js'])
+
 function isExtensionFile(name: string): boolean {
-  return name.endsWith('.ts') || name.endsWith('.js')
+  return !NON_EXTENSION_FILES.has(name) && (name.endsWith('.ts') || name.endsWith('.js'))
 }
 
 function resolveExtensionEntries(dir: string): string[] {
@@ -102,6 +104,9 @@ export function initResources(agentDir: string): void {
   // Sync extensions — always overwrite so updates land on next launch
   const destExtensions = join(agentDir, 'extensions')
   cpSync(bundledExtensionsDir, destExtensions, { recursive: true, force: true })
+  for (const helperName of NON_EXTENSION_FILES) {
+    rmSync(join(destExtensions, helperName), { force: true })
+  }
 
   // Sync agents
   const destAgents = join(agentDir, 'agents')
@@ -126,11 +131,16 @@ export function initResources(agentDir: string): void {
 export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
   const piAgentDir = join(homedir(), '.pi', 'agent')
   const piExtensionsDir = join(piAgentDir, 'extensions')
+  const gsdExtensionsDir = join(agentDir, 'extensions')
+  const managedKeys = new Set(
+    discoverExtensionEntryPaths(gsdExtensionsDir).map((entryPath) => getExtensionKey(entryPath, gsdExtensionsDir)),
+  )
   const bundledKeys = new Set(
     discoverExtensionEntryPaths(bundledExtensionsDir).map((entryPath) => getExtensionKey(entryPath, bundledExtensionsDir)),
   )
+  const reservedKeys = new Set([...managedKeys, ...bundledKeys])
   const piExtensionPaths = discoverExtensionEntryPaths(piExtensionsDir).filter(
-    (entryPath) => !bundledKeys.has(getExtensionKey(entryPath, piExtensionsDir)),
+    (entryPath) => !reservedKeys.has(getExtensionKey(entryPath, piExtensionsDir)),
   )
 
   return new DefaultResourceLoader({

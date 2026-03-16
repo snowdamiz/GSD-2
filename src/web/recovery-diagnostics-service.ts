@@ -327,7 +327,7 @@ function resolveSummary(options: {
     return {
       tone: "warning",
       label: `Recovery diagnostics found ${options.validationCount + options.doctorTotal} actionable issue${options.validationCount + options.doctorTotal === 1 ? "" : "s"}`,
-      detail: "Review the doctor and validation sections below before resuming work.",
+      detail: `Review the doctor and validation sections below before resuming work on ${options.currentUnitId ?? "the current project"}.`,
     }
   }
 

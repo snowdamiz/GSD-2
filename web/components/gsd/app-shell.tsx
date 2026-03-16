@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef } from "react"
 import { Sidebar, MilestoneExplorer } from "@/components/gsd/sidebar"
 import { Terminal } from "@/components/gsd/terminal"
-import { ShellTerminal } from "@/components/gsd/shell-terminal"
 import { Dashboard } from "@/components/gsd/dashboard"
 import { Roadmap } from "@/components/gsd/roadmap"
 import { FilesView } from "@/components/gsd/files-view"
@@ -183,7 +182,7 @@ function WorkspaceChrome() {
             <span className="font-semibold tracking-tight">GSD 2</span>
           </div>
           <span className="text-2xl font-thin text-muted-foreground/50 leading-none select-none">/</span>
-          <span className="text-sm text-muted-foreground" data-testid="workspace-project-cwd">
+          <span className="text-sm text-muted-foreground" data-testid="workspace-project-cwd" title={projectPath ?? undefined}>
             {isConnecting ? (
               <Skeleton className="inline-block h-4 w-28 align-middle" />
             ) : (
@@ -205,11 +204,26 @@ function WorkspaceChrome() {
 
         <div className="flex items-center gap-3">
           <span
+            className={cn(
+              "inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs font-medium",
+              statusPillClass(status.tone),
+            )}
+            data-testid="workspace-connection-status"
+          >
+            <span className={cn("h-2 w-2 rounded-full", connectionDotClass(status.tone))} />
+            {status.label}
+          </span>
+          <span
             className="text-xs text-muted-foreground"
             data-testid="workspace-scope-label"
           >
             {isConnecting ? <Skeleton className="inline-block h-3.5 w-40 align-middle" /> : <ScopeBadge label={scopeLabel} size="sm" />}
           </span>
+          {!isConnecting && sessionLabel && (
+            <span className="rounded-full border border-border bg-card px-2.5 py-1 text-xs text-muted-foreground">
+              {runtimeLabel} · {shortenPath(sessionLabel, 2)}
+            </span>
+          )}
         </div>
       </header>
 
@@ -292,7 +306,7 @@ function WorkspaceChrome() {
                 className="overflow-hidden"
                 style={{ height: isTerminalExpanded ? terminalHeight : 0, transition: isDraggingTerminal.current ? "none" : "height 200ms" }}
               >
-                <ShellTerminal className="h-full" />
+                <Terminal className="h-full" />
               </div>
             </div>
           )}

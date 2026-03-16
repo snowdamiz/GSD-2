@@ -4,7 +4,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<Response> {
-  return Response.json(await collectBootPayload(), {
+  const { projectDetection: _projectDetection, ...bootPayload } = await collectBootPayload();
+
+  return Response.json(bootPayload, {
     headers: {
       "Cache-Control": "no-store",
     },

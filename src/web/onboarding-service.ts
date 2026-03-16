@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { getEnvApiKey } from "../../packages/pi-ai/src/web-runtime-env-api-keys.ts";
-import type { OAuthAuthInfo, OAuthPrompt, OAuthProviderInterface } from "../../packages/pi-ai/src/web-runtime-oauth.ts";
+import type { OAuthAuthInfo, OAuthPrompt, OAuthProviderInterface } from "../../packages/pi-ai/dist/oauth.js";
 import { authFilePath } from "../app-paths.ts";
 import { createOnboardingAuthStorage, type OnboardingAuthStorage as AuthStorageInstance } from "./web-auth-storage.ts";
 
@@ -24,6 +24,9 @@ type ValidationProbeResult =
   | { ok: false; message: string };
 
 type GetEnvApiKeyFn = typeof getEnvApiKey;
+type BridgeAuthRefresher = () => Promise<void>;
+
+let onboardingBridgeAuthRefresher: BridgeAuthRefresher | null = null;
 
 type OnboardingServiceDeps = {
   env?: NodeJS.ProcessEnv;
@@ -406,10 +409,7 @@ function getOnboardingDeps(): OnboardingServiceDeps {
     now: () => new Date(),
     createFlowId: () => randomUUID(),
     validateApiKey: resolveRuntimeTestValidateApiKey(process.env),
-    refreshBridgeAuth: async () => {
-      const bridgeModule = await import("./bridge-service.ts");
-      await bridgeModule.refreshProjectBridgeAuth();
-    },
+    refreshBridgeAuth: onboardingBridgeAuthRefresher ?? undefined,
     ...(onboardingServiceOverrides ?? {}),
   };
 }
@@ -819,6 +819,11 @@ export function getOnboardingService(): OnboardingService {
 
 export async function collectOnboardingState(): Promise<OnboardingState> {
   return await getOnboardingService().getState();
+}
+
+export function registerOnboardingBridgeAuthRefresher(refresher: BridgeAuthRefresher | null): void {
+  onboardingBridgeAuthRefresher = refresher;
+  onboardingServiceSingleton = null;
 }
 
 export function configureOnboardingServiceForTests(overrides: Partial<OnboardingServiceDeps> | null): void {

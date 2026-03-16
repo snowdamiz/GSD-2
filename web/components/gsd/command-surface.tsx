@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Archive,
   ArrowRightLeft,
@@ -339,6 +339,7 @@ export function CommandSurface() {
   const currentSessionFile = workspace.boot?.bridge.activeSessionFile ?? workspace.boot?.bridge.sessionState?.sessionFile ?? null
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({})
   const [flowInput, setFlowInput] = useState("")
+  const commandSurfaceViewportRef = useRef<HTMLDivElement>(null)
 
   // ─── Auto-loaders ──────────────────────────────────────────────────
 
@@ -379,6 +380,13 @@ export function CommandSurface() {
     if (commandSurface.sessionBrowser.loaded) return
     void loadSessionBrowser()
   }, [commandSurface.open, commandSurface.section, commandSurface.pendingAction, commandSurface.sessionBrowser.loaded, loadSessionBrowser])
+
+  useEffect(() => {
+    if (!commandSurface.open) return
+    const viewport = commandSurfaceViewportRef.current
+    if (!viewport) return
+    viewport.scrollTop = 0
+  }, [commandSurface.open, commandSurface.activeSurface, commandSurface.section])
 
   useEffect(() => {
     if (!commandSurface.open || commandSurface.section !== "session") return
@@ -471,6 +479,7 @@ export function CommandSurface() {
   const selectedProviderApiKey = selectedAuthProvider ? apiKeys[selectedAuthProvider.id] ?? "" : ""
   const devOverrides = useDevOverrides()
   const surfaceSections = availableSectionsForSurface(commandSurface.activeSurface, IS_DEV_MODE)
+  const surfaceKindLabel = `/${commandSurface.activeSurface ?? "settings"}`
 
   const triggerRecoveryBrowserAction = (actionId: string) => {
     switch (actionId) {
@@ -794,6 +803,18 @@ export function CommandSurface() {
         testId="command-surface-toggle-auto-retry"
       />
 
+      <p className="text-xs text-muted-foreground" data-testid="command-surface-auto-retry-state">
+        {autoRetryBusy
+          ? "Updating auto-retry…"
+          : settingsRequests.autoRetry.error
+            ? settingsRequests.autoRetry.error
+            : settingsRequests.autoRetry.result
+              ? settingsRequests.autoRetry.result
+              : liveSessionState?.autoRetryEnabled
+                ? "Auto-retry enabled"
+                : "Auto-retry disabled"}
+      </p>
+
       {liveSessionState?.retryInProgress && (
         <div className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-3">
           <div>
@@ -816,6 +837,17 @@ export function CommandSurface() {
       )}
 
       {settingsRequests.autoRetry.error && <p className="text-xs text-red-400">{settingsRequests.autoRetry.error}</p>}
+      <p className="text-xs text-muted-foreground" data-testid="command-surface-abort-retry-state">
+        {abortRetryBusy
+          ? "Aborting retry…"
+          : settingsRequests.abortRetry.error
+            ? settingsRequests.abortRetry.error
+            : settingsRequests.abortRetry.result
+              ? settingsRequests.abortRetry.result
+              : liveSessionState?.retryInProgress
+                ? "Retry can be aborted"
+                : "No retry in progress"}
+      </p>
       {settingsRequests.abortRetry.error && <p className="text-xs text-red-400">{settingsRequests.abortRetry.error}</p>}
     </div>
   )
@@ -824,6 +856,17 @@ export function CommandSurface() {
     const diag = recoveryDiagnostics
     return (
       <div className="space-y-4" data-testid="command-surface-recovery">
+        <div className="text-xs text-muted-foreground" data-testid="command-surface-recovery-state">
+          {recoveryBusy
+            ? "Loading recovery diagnostics…"
+            : recovery.error
+              ? "Recovery diagnostics failed"
+              : recovery.stale
+                ? "Recovery diagnostics stale"
+                : recovery.loaded
+                  ? "Recovery diagnostics loaded"
+                  : "Recovery diagnostics idle"}
+        </div>
         <SectionHeader
           title="Recovery"
           status={
@@ -840,25 +883,63 @@ export function CommandSurface() {
         />
 
         {recovery.error && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400">{recovery.error}</div>
+          <div
+            className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400"
+            data-testid="command-surface-recovery-error"
+          >
+            {recovery.error}
+          </div>
         )}
 
         {recoveryBusy && !diag && (
-          <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
-            <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
-            Loading diagnostics…
-          </div>
+          <>
+            <div className="flex items-center gap-2 py-6 text-xs text-muted-foreground">
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+              Loading diagnostics…
+            </div>
+            <div className="flex flex-wrap gap-2 border-t border-border/30 pt-3" data-testid="command-surface-recovery-actions">
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => void loadRecoveryDiagnostics()}
+                data-testid="command-surface-recovery-action-refresh_diagnostics"
+                className="h-7 text-xs"
+              >
+                Refresh diagnostics
+              </Button>
+            </div>
+          </>
         )}
 
         {diag?.status === "unavailable" && !recovery.error && (
-          <div className="space-y-1 rounded-lg border border-border/50 bg-card/50 px-4 py-3">
-            <div className="text-sm font-medium text-foreground">{diag.summary.label}</div>
-            <p className="text-xs text-muted-foreground">{diag.summary.detail}</p>
-          </div>
+          <>
+            <div className="space-y-1 rounded-lg border border-border/50 bg-card/50 px-4 py-3" data-testid="command-surface-recovery-summary">
+              <div className="text-sm font-medium text-foreground">{diag.summary.label}</div>
+              <p className="text-xs text-muted-foreground">{diag.summary.detail}</p>
+            </div>
+            <div className="flex flex-wrap gap-2 border-t border-border/30 pt-3" data-testid="command-surface-recovery-actions">
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                onClick={() => void loadRecoveryDiagnostics()}
+                data-testid="command-surface-recovery-action-refresh_diagnostics"
+                className="h-7 text-xs"
+              >
+                Refresh diagnostics
+              </Button>
+            </div>
+          </>
         )}
 
         {diag && diag.status !== "unavailable" && (
           <>
+            <div className="space-y-1" data-testid="command-surface-recovery-summary">
+              <div className="text-sm font-medium text-foreground">{diag.summary.label}</div>
+              <p className="text-xs text-muted-foreground">{diag.summary.detail}</p>
+            </div>
+
             {/* Summary stats */}
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-lg border border-border/50 bg-card/50 px-3 py-2.5">
@@ -881,7 +962,10 @@ export function CommandSurface() {
 
             {/* Last failure */}
             {diag.bridge.lastFailure && (
-              <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5">
+              <div
+                className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5"
+                data-testid="command-surface-recovery-last-failure"
+              >
                 <div className="text-xs font-medium text-red-400">Last failure</div>
                 <p className="mt-1 text-xs text-red-400/80">{diag.bridge.lastFailure.message}</p>
                 <div className="mt-1.5 flex gap-3 text-[10px] text-red-400/60">
@@ -922,33 +1006,54 @@ export function CommandSurface() {
 
             {/* Interrupted run */}
             {diag.interruptedRun.detected && (
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5">
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2.5" data-testid="command-surface-recovery-interrupted-run">
                 <div className="text-xs font-medium text-amber-400">Interrupted run detected</div>
-                <p className="mt-1 text-xs text-amber-400/80">{diag.interruptedRun.detail}</p>
-                <div className="mt-1.5 flex flex-wrap gap-3 text-[10px] text-amber-400/60">
-                  <span>{diag.interruptedRun.counts.toolCalls} tools</span>
-                  <span>{diag.interruptedRun.counts.filesWritten} files</span>
-                  <span>{diag.interruptedRun.counts.errors} errors</span>
+                <div className="mt-1 space-y-1 text-xs text-amber-400/80">
+                  <p>Available: yes</p>
+                  <p>Detected: yes</p>
+                  <p>{diag.interruptedRun.detail}</p>
+                </div>
+                <div className="mt-1.5 grid gap-1 text-[10px] text-amber-400/60">
+                  <span>Tool calls: {diag.interruptedRun.counts.toolCalls}</span>
+                  <span>Files written: {diag.interruptedRun.counts.filesWritten}</span>
+                  <span>Commands: {diag.interruptedRun.counts.commandsRun}</span>
+                  <span>Errors: {diag.interruptedRun.counts.errors}</span>
+                  <span>Last forensic error: {diag.interruptedRun.lastError ?? "[redacted]"}</span>
                 </div>
               </div>
             )}
 
             {/* Actions */}
-            {diag.actions.browser.length > 0 && (
-              <div className="flex flex-wrap gap-2 border-t border-border/30 pt-3">
-                {diag.actions.browser.map((action) => (
+            <div className="flex flex-wrap gap-2 border-t border-border/30 pt-3" data-testid="command-surface-recovery-actions">
+              {diag.actions.browser.length > 0 ? (
+                diag.actions.browser.map((action) => (
                   <Button
                     key={action.id}
                     type="button"
                     variant={action.emphasis === "danger" ? "destructive" : action.emphasis === "primary" ? "default" : "outline"}
                     size="sm"
                     onClick={() => triggerRecoveryBrowserAction(action.id)}
-                    disabled={action.id === "refresh_diagnostics" ? recoveryBusy : false}
                     data-testid={`command-surface-recovery-action-${action.id}`}
                     className="h-7 text-xs"
                   >
                     {action.label}
                   </Button>
+                ))
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  {recoveryBusy ? "Loading recovery actions…" : "No browser recovery actions available."}
+                </span>
+              )}
+            </div>
+
+            {diag.actions.commands.length > 0 && (
+              <div className="space-y-2 border-t border-border/30 pt-3" data-testid="command-surface-recovery-commands">
+                <div className="text-xs font-medium text-muted-foreground">Suggested commands</div>
+                {diag.actions.commands.map((command) => (
+                  <div key={command.command} className="rounded-lg border border-border/50 bg-card/50 px-3 py-2 text-xs">
+                    <div className="font-mono text-foreground">{command.command}</div>
+                    <p className="mt-1 text-muted-foreground">{command.reason}</p>
+                  </div>
                 ))}
               </div>
             )}
@@ -962,6 +1067,17 @@ export function CommandSurface() {
     const result = gitSummary.result
     return (
       <div className="space-y-4" data-testid="command-surface-git-summary">
+        <div className="text-xs text-muted-foreground" data-testid="command-surface-git-state">
+          {gitSummaryBusy
+            ? "Loading git summary…"
+            : gitSummary.error
+              ? "Git summary failed"
+              : result?.kind === "not_repo"
+                ? "No git repository"
+                : result?.kind === "repo"
+                  ? `Repo ready${result.hasChanges ? " — changes detected" : " — clean"}`
+                  : "Git summary idle"}
+        </div>
         <SectionHeader
           title="Git"
           status={
@@ -988,11 +1104,16 @@ export function CommandSurface() {
         )}
 
         {gitSummary.error && (
-          <div className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400">{gitSummary.error}</div>
+          <div
+            className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2.5 text-xs text-red-400"
+            data-testid="command-surface-git-error"
+          >
+            {gitSummary.error}
+          </div>
         )}
 
         {!gitSummary.error && result?.kind === "not_repo" && (
-          <div className="space-y-1 rounded-lg border border-border/50 bg-card/50 px-4 py-3">
+          <div className="space-y-1 rounded-lg border border-border/50 bg-card/50 px-4 py-3" data-testid="command-surface-git-not-repo">
             <div className="text-sm font-medium text-foreground">No Git repository</div>
             <p className="text-xs text-muted-foreground">{result.message}</p>
           </div>
@@ -1183,8 +1304,8 @@ export function CommandSurface() {
         )}
 
         {sessionBrowser.loaded && (
-          <p className="text-[11px] text-muted-foreground">
-            {sessionBrowser.returnedSessions} of {sessionBrowser.totalSessions} sessions
+          <p className="text-[11px] text-muted-foreground" data-testid="command-surface-session-browser-meta">
+            Current-project sessions · {sessionBrowser.returnedSessions} of {sessionBrowser.totalSessions} · {sessionBrowser.sortMode} · {sessionBrowser.nameFilter}
           </p>
         )}
 
@@ -1766,14 +1887,14 @@ export function CommandSurface() {
 
   return (
     <Sheet open={commandSurface.open} onOpenChange={(open) => !open && closeCommandSurface()}>
-      <SheetContent side="right" className="flex w-full flex-col p-0 sm:max-w-[540px]" data-testid="command-surface">
+      <SheetContent side="right" className="flex h-full w-full flex-col p-0 sm:max-w-[540px]" data-testid="command-surface">
         {/* Visually hidden accessible title */}
         <SheetHeader className="sr-only">
           <SheetTitle>{surfaceTitle(commandSurface.activeSurface)}</SheetTitle>
           <SheetDescription>Settings and controls</SheetDescription>
         </SheetHeader>
 
-        <div className="flex h-full">
+        <div className="flex h-full min-h-0">
           {/* ─── Left nav rail ─────────────────────────────────────── */}
           <nav className="flex w-12 shrink-0 flex-col items-center gap-0.5 border-r border-border/40 bg-card/30 py-3" data-testid="command-surface-sections">
             {surfaceSections.map((section) => {
@@ -1804,8 +1925,42 @@ export function CommandSurface() {
           </nav>
 
           {/* ─── Right content area ────────────────────────────────── */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <ScrollArea className="flex-1">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="flex items-center justify-between gap-3 border-b border-border/40 px-5 py-4">
+              <div>
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">Command surface</div>
+                <div className="text-lg font-semibold text-foreground" data-testid="command-surface-title">
+                  {surfaceTitle(commandSurface.activeSurface)}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="rounded-full border border-border bg-card px-2.5 py-1 text-xs font-medium text-muted-foreground" data-testid="command-surface-kind">
+                  {surfaceKindLabel}
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={closeCommandSurface}
+                  aria-label="Close"
+                  className="h-8 w-8"
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            {(commandSurface.lastResult || commandSurface.lastError) && (
+              <div
+                className={cn(
+                  "border-b border-border/30 px-5 py-3 text-xs",
+                  commandSurface.lastError ? "bg-red-500/5 text-red-400" : "bg-emerald-500/5 text-emerald-400",
+                )}
+                data-testid="command-surface-result"
+              >
+                {commandSurface.lastError ?? commandSurface.lastResult}
+              </div>
+            )}
+            <ScrollArea className="min-h-0 flex-1" viewportRef={commandSurfaceViewportRef}>
               <div className="px-5 py-5">
                 {renderSection()}
               </div>

@@ -27,6 +27,7 @@ import { authFilePath } from "../app-paths.ts";
 import { getProjectSessionsDir } from "../project-sessions.ts";
 import {
   collectOnboardingState,
+  registerOnboardingBridgeAuthRefresher,
   type OnboardingLockReason,
   type OnboardingState,
 } from "./onboarding-service.ts";
@@ -37,7 +38,7 @@ import {
 
 const DEFAULT_PACKAGE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const RESPONSE_TIMEOUT_MS = 30_000;
-const START_TIMEOUT_MS = 90_000;
+const START_TIMEOUT_MS = 150_000;
 const MAX_STDERR_BUFFER = 8_000;
 const WORKSPACE_INDEX_CACHE_TTL_MS = 30_000;
 
@@ -1020,33 +1021,45 @@ export function resolveBridgeRuntimeConfig(env: NodeJS.ProcessEnv = getBridgeDep
 function resolveBridgeCliEntry(config: BridgeRuntimeConfig, deps: BridgeServiceDeps): BridgeCliEntry {
   const checkExists = deps.existsSync ?? existsSync;
   const execPath = deps.execPath ?? process.execPath;
+  const env = deps.env ?? process.env;
+  const hostKind = env.GSD_WEB_HOST_KIND;
   const sourceEntry = join(config.packageRoot, "src", "loader.ts");
   const resolveTsLoader = join(config.packageRoot, "src", "resources", "extensions", "gsd", "tests", "resolve-ts.mjs");
-  if (checkExists(sourceEntry) && checkExists(resolveTsLoader)) {
-    return {
-      command: execPath,
-      args: [
-        "--import",
-        resolveTsLoader,
-        "--experimental-strip-types",
-        sourceEntry,
-        "--mode",
-        "rpc",
-        "--continue",
-        "--session-dir",
-        config.projectSessionsDir,
-      ],
-      cwd: config.projectCwd,
-    };
-  }
-
   const builtEntry = join(config.packageRoot, "dist", "loader.js");
-  if (checkExists(builtEntry)) {
-    return {
-      command: execPath,
-      args: [builtEntry, "--mode", "rpc", "--continue", "--session-dir", config.projectSessionsDir],
-      cwd: config.projectCwd,
-    };
+
+  const sourceCliEntry =
+    checkExists(sourceEntry) && checkExists(resolveTsLoader)
+      ? {
+          command: execPath,
+          args: [
+            "--import",
+            resolveTsLoader,
+            "--experimental-strip-types",
+            sourceEntry,
+            "--mode",
+            "rpc",
+            "--continue",
+            "--session-dir",
+            config.projectSessionsDir,
+          ],
+          cwd: config.projectCwd,
+        } satisfies BridgeCliEntry
+      : null;
+
+  const builtCliEntry = checkExists(builtEntry)
+    ? {
+        command: execPath,
+        args: [builtEntry, "--mode", "rpc", "--continue", "--session-dir", config.projectSessionsDir],
+        cwd: config.projectCwd,
+      } satisfies BridgeCliEntry
+    : null;
+
+  if (hostKind === "packaged-standalone") {
+    if (builtCliEntry) return builtCliEntry;
+    if (sourceCliEntry) return sourceCliEntry;
+  } else {
+    if (sourceCliEntry) return sourceCliEntry;
+    if (builtCliEntry) return builtCliEntry;
   }
 
   throw new Error(`RPC bridge entry not found; checked=${sourceEntry},${builtEntry}`);
@@ -1972,15 +1985,63 @@ export async function collectBootPayload(): Promise<BridgeBootPayload> {
   const deps = getBridgeDeps();
   const env = deps.env ?? process.env;
   const config = resolveBridgeRuntimeConfig(env);
+  const getAutoDashboardData = deps.getAutoDashboardData ?? (() => collectTestOnlyFallbackAutoDashboardData());
+  const listSessions = deps.listSessions ?? (async (dir: string) => listProjectSessions(dir));
+  const projectDetection = detectProjectKind(config.projectCwd);
+
+  const onboarding = await resolveBootOnboardingState(deps, env);
+
+  if (onboarding.locked && env.GSD_WEB_HOST_KIND === "packaged-standalone") {
+    return {
+      project: {
+        cwd: config.projectCwd,
+        sessionsDir: config.projectSessionsDir,
+        packageRoot: config.packageRoot,
+      },
+      workspace: {
+        milestones: [],
+        active: {
+          phase: "pre-planning",
+        },
+        scopes: [
+          {
+            scope: "project",
+            label: "project",
+            kind: "project",
+          },
+        ],
+        validationIssues: [],
+      },
+      auto: collectTestOnlyFallbackAutoDashboardData(),
+      onboarding,
+      onboardingNeeded: true,
+      resumableSessions: [],
+      bridge: {
+        phase: "idle",
+        projectCwd: config.projectCwd,
+        projectSessionsDir: config.projectSessionsDir,
+        packageRoot: config.packageRoot,
+        startedAt: null,
+        updatedAt: new Date().toISOString(),
+        connectionCount: 0,
+        lastCommandType: null,
+        activeSessionId: null,
+        activeSessionFile: null,
+        sessionState: null,
+        lastError: null,
+      },
+      projectDetection,
+    };
+  }
+
   const bridge = getProjectBridgeService();
 
   const workspacePromise = loadCachedWorkspaceIndex(
     config.projectCwd,
     async () => await (deps.indexWorkspace ?? fallbackWorkspaceIndex)(config.projectCwd),
   );
-  const getAutoDashboardData = deps.getAutoDashboardData ?? (() => collectTestOnlyFallbackAutoDashboardData());
   const autoPromise = Promise.resolve(getAutoDashboardData());
-  const onboardingPromise = resolveBootOnboardingState(deps, env);
+  const sessionsPromise = listSessions(config.projectSessionsDir);
 
   try {
     await bridge.ensureStarted();
@@ -1989,11 +2050,9 @@ export async function collectBootPayload(): Promise<BridgeBootPayload> {
   }
 
   const bridgeSnapshot = bridge.getSnapshot();
-  const sessionsPromise = (deps.listSessions ?? (async (dir: string) => listProjectSessions(dir)))(config.projectSessionsDir);
-  const [workspace, auto, onboarding, sessions] = await Promise.all([
+  const [workspace, auto, sessions] = await Promise.all([
     workspacePromise,
     autoPromise,
-    onboardingPromise,
     sessionsPromise,
   ]);
 
@@ -2009,7 +2068,7 @@ export async function collectBootPayload(): Promise<BridgeBootPayload> {
     onboardingNeeded: onboarding.locked,
     resumableSessions: sessions.map((session) => toBootResumableSession(session, bridgeSnapshot.activeSessionFile)),
     bridge: bridgeSnapshot,
-    projectDetection: detectProjectKind(config.projectCwd),
+    projectDetection,
   };
 }
 
@@ -2025,6 +2084,10 @@ export function buildBridgeFailureResponse(commandType: string, error: unknown):
 export async function refreshProjectBridgeAuth(): Promise<void> {
   await getProjectBridgeService().refreshAuth();
 }
+
+registerOnboardingBridgeAuthRefresher(async () => {
+  await refreshProjectBridgeAuth();
+});
 
 export function emitProjectLiveStateInvalidation(
   descriptor: BridgeLiveStateInvalidationDescriptor,

@@ -67,7 +67,6 @@ export function NewMilestoneDialog({ open, onOpenChange }: NewMilestoneDialogPro
       setHasStarted(false)
       setInput("")
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   // Watch for new terminal lines and streaming text, convert to chat messages

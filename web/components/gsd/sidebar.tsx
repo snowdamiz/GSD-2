@@ -15,6 +15,7 @@ import {
   Map as MapIcon,
   Activity,
   Columns2,
+  LifeBuoy,
   LogOut,
   Loader2,
   Milestone,
@@ -33,6 +34,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { cn } from "@/lib/utils"
 import {
+  getCurrentScopeLabel,
   getLiveWorkspaceIndex,
   getLiveAutoDashboard,
   buildPromptCommand,
@@ -178,7 +180,7 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
 
 export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boolean }) {
   const workspace = useGSDWorkspaceState()
-  const { sendCommand } = useGSDWorkspaceActions()
+  const { sendCommand, openCommandSurface, setCommandSurfaceSection } = useGSDWorkspaceActions()
   const [expandedMilestones, setExpandedMilestones] = useState<string[]>([])
   const [expandedSlices, setExpandedSlices] = useState<string[]>([])
   const [milestoneDialogOpen, setMilestoneDialogOpen] = useState(false)
@@ -188,6 +190,9 @@ export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boo
   const activeScope = liveWorkspace?.active
   const auto = getLiveAutoDashboard(workspace)
   const bridge = workspace.boot?.bridge ?? null
+  const recoverySummary = workspace.live.recoverySummary
+  const validationCount = liveWorkspace?.validationIssues.length ?? 0
+  const currentScopeLabel = getCurrentScopeLabel(liveWorkspace)
 
   const workflowAction = deriveWorkflowAction({
     phase: liveWorkspace?.active.phase ?? "pre-planning",
@@ -211,6 +216,11 @@ export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boo
     } else {
       handleCommand(workflowAction.primary.command)
     }
+  }
+
+  const handleOpenRecovery = () => {
+    openCommandSurface("settings", { source: "sidebar" })
+    setCommandSurfaceSection("recovery")
   }
 
   useEffect(() => {
@@ -280,6 +290,9 @@ export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boo
             <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
               Milestones
             </span>
+            <div className="mt-1 text-xs text-foreground" data-testid="sidebar-current-scope">
+              {currentScopeLabel}
+            </div>
           </div>
 
           {workspace.bootStatus === "error" && milestones.length === 0 && (
@@ -382,6 +395,28 @@ export function MilestoneExplorer({ isConnecting = false }: { isConnecting?: boo
       )}
 
       {/* Sticky action footer */}
+      {!isConnecting && (
+        <div className="border-t border-border px-3 py-2.5">
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs">
+            <div className="min-w-0">
+              <div className="font-medium text-foreground" data-testid="sidebar-validation-count">
+                {validationCount} validation issue{validationCount === 1 ? "" : "s"}
+              </div>
+              <div className="truncate text-muted-foreground">{recoverySummary.label}</div>
+            </div>
+            <button
+              type="button"
+              onClick={handleOpenRecovery}
+              className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-[11px] font-medium text-foreground transition-colors hover:bg-accent"
+              data-testid="sidebar-recovery-summary-entrypoint"
+            >
+              <LifeBuoy className="h-3.5 w-3.5" />
+              Recovery
+            </button>
+          </div>
+        </div>
+      )}
+
       {!isConnecting && workflowAction.primary && (
         <div className="border-t border-border px-3 py-2.5">
           <div className="flex items-center gap-2">

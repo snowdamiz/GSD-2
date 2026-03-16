@@ -430,12 +430,14 @@ async function requestLocalJson(url: string, timeoutMs: number): Promise<{ statu
   })
 }
 
-async function waitForBootReady(url: string, timeoutMs = 120_000, stderr?: WritableLike): Promise<void> {
+async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: WritableLike): Promise<void> {
   const deadline = Date.now() + timeoutMs
   const startedAt = Date.now()
   let lastError: string | null = null
   let hostUp = false
   let lastPhase: string | null = null
+  let lastHealthyState: string | null = null
+  let consecutiveHealthyBoots = 0
   // Print a progress dot every N ms while waiting so the terminal isn't silent
   const TICKER_INTERVAL_MS = 5_000
   let lastTickAt = startedAt
@@ -450,16 +452,37 @@ async function waitForBootReady(url: string, timeoutMs = 120_000, stderr?: Writa
       if (response.statusCode >= 200 && response.statusCode < 300) {
         const payload = JSON.parse(response.body) as {
           bridge?: { phase?: string; lastError?: { message?: string } }
+          onboarding?: { locked?: boolean }
         }
         const phase = payload.bridge?.phase ?? 'unknown'
+        const healthyState = payload.onboarding?.locked ? 'locked' : phase === 'ready' ? 'ready' : null
 
-        if (!hostUp) {
-          hostUp = true
-          stderr?.write(`[gsd] Web host ready — waiting for agent bridge…\n`)
-        }
+        if (payload.onboarding?.locked) {
+          if (!hostUp) {
+            hostUp = true
+            stderr?.write(`[gsd] Web host ready — waiting for onboarding unlock…\n`)
+          }
+          consecutiveHealthyBoots = healthyState === lastHealthyState ? consecutiveHealthyBoots + 1 : 1
+          lastHealthyState = healthyState
+          if (consecutiveHealthyBoots >= 2) {
+            return
+          }
+        } else {
+          if (!hostUp) {
+            hostUp = true
+            stderr?.write(`[gsd] Web host ready — waiting for agent bridge…\n`)
+          }
 
-        if (phase === 'ready') {
-          return
+          if (phase === 'ready') {
+            consecutiveHealthyBoots = healthyState === lastHealthyState ? consecutiveHealthyBoots + 1 : 1
+            lastHealthyState = healthyState
+            if (consecutiveHealthyBoots >= 2) {
+              return
+            }
+          } else {
+            consecutiveHealthyBoots = 0
+            lastHealthyState = null
+          }
         }
 
         if (phase === 'failed') {
@@ -617,7 +640,7 @@ export async function launchWebMode(
   }
 
   try {
-    const bootReadyFn = deps.waitForBootReady ?? ((u: string) => waitForBootReady(u, 120_000, stderr))
+    const bootReadyFn = deps.waitForBootReady ?? ((u: string) => waitForBootReady(u, 180_000, stderr))
     await bootReadyFn(url)
   } catch (error) {
     const failure: WebModeLaunchFailure = {

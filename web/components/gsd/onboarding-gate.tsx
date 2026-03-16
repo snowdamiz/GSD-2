@@ -86,9 +86,10 @@ export function OnboardingGate() {
   const isBusy = workspace.onboardingRequestState !== "idle"
 
   // ─── Wizard state ───
-  const [stepIndex, setStepIndex] = useState(0)
-  const [[page, direction], setPage] = useState([0, 0])
+  const [stepIndex, setStepIndex] = useState(1)
+  const [[page, direction], setPage] = useState([1, 0])
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null)
+  const [dismissedAfterSuccess, setDismissedAfterSuccess] = useState(false)
 
   // Sync selected provider from onboarding state
   useEffect(() => {
@@ -129,9 +130,21 @@ export function OnboardingGate() {
     return Math.round((stepIndex / (WIZARD_STEPS.length - 1)) * 100)
   }, [stepIndex])
 
+  useEffect(() => {
+    if (onboarding?.locked || isBusy) {
+      setDismissedAfterSuccess(false)
+    }
+  }, [onboarding?.locked, isBusy])
+
   // ─── Gate check ───
   if (!onboarding) return null
-  if (!forceVisible && !onboarding.locked && !isBusy) return null
+  const onboardingSettled =
+    !onboarding.locked ||
+    (
+      onboarding.lastValidation?.status === "succeeded" &&
+      (onboarding.bridgeAuthRefresh.phase === "succeeded" || onboarding.bridgeAuthRefresh.phase === "idle")
+    )
+  if (!forceVisible && (onboardingSettled || dismissedAfterSuccess) && !isBusy) return null
 
   // ─── Render ───
   return (
@@ -214,7 +227,10 @@ export function OnboardingGate() {
                 <StepProvider
                   providers={onboarding.required.providers}
                   selectedId={selectedProviderId}
-                  onSelect={setSelectedProviderId}
+                  onSelect={(id) => {
+                    setSelectedProviderId(id)
+                    paginate(2)
+                  }}
                   onNext={() => paginate(2)}
                   onBack={() => paginate(0)}
                 />
@@ -227,7 +243,19 @@ export function OnboardingGate() {
                   lastValidation={onboarding.lastValidation}
                   requestState={workspace.onboardingRequestState}
                   requestProviderId={workspace.onboardingRequestProviderId}
-                  onSaveApiKey={(pid, key) => void saveApiKey(pid, key)}
+                  onSaveApiKey={async (pid, key) => {
+                    const next = await saveApiKey(pid, key)
+                    const settled = Boolean(
+                      next &&
+                      !next.locked &&
+                      (next.bridgeAuthRefresh.phase === "succeeded" || next.bridgeAuthRefresh.phase === "idle"),
+                    )
+                    if (settled) {
+                      setDismissedAfterSuccess(true)
+                      void refreshBoot()
+                    }
+                    return next
+                  }}
                   onStartFlow={(pid) => void startProviderFlow(pid)}
                   onSubmitFlowInput={(fid, input) => void submitProviderFlowInput(fid, input)}
                   onCancelFlow={(fid) => void cancelProviderFlow(fid)}

@@ -8,7 +8,7 @@ import {
   type OAuthCredentials,
   type OAuthLoginCallbacks,
   type OAuthProviderInterface,
-} from "../../packages/pi-ai/src/web-runtime-oauth.ts";
+} from "../../packages/pi-ai/dist/oauth.js";
 
 export type ApiKeyCredential = {
   type: "api_key";
