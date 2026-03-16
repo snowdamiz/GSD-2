@@ -98,7 +98,7 @@ export async function handleForensics(
     problemDescription = await ctx.ui.input(
       "Describe what went wrong:",
       "e.g. auto-mode got stuck on task T03",
-    );
+    ) ?? "";
   }
   if (!problemDescription?.trim()) {
     ctx.ui.notify("Problem description required for forensic analysis.", "warning");
