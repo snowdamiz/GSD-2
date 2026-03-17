@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react"
 import {
   ChevronRight,
   ChevronDown,
@@ -24,16 +24,14 @@ import {
   SkipForward,
 } from "lucide-react"
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import {
   getCurrentScopeLabel,
@@ -45,6 +43,7 @@ import {
 } from "@/lib/gsd-workspace-store"
 import { getMilestoneStatus, getSliceStatus, getTaskStatus, type ItemStatus } from "@/lib/workspace-status"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
+import { useProjectStoreManager } from "@/lib/project-store-manager"
 import { Skeleton } from "@/components/ui/skeleton"
 import { NewMilestoneDialog } from "@/components/gsd/new-milestone-dialog"
 
@@ -68,6 +67,9 @@ interface NavRailProps {
 
 export function NavRail({ activeView, onViewChange, isConnecting = false }: NavRailProps) {
   const { openCommandSurface } = useGSDWorkspaceActions()
+  const manager = useProjectStoreManager()
+  const activeProjectCwd = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot)
+  const [exitDialogOpen, setExitDialogOpen] = useState(false)
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -142,55 +144,138 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
         >
           <Settings className="h-5 w-5" />
         </button>
-        <AlertDialog>
-          <AlertDialogTrigger asChild>
-            <button
-              className={cn(
-                "flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors",
-                isConnecting
-                  ? "cursor-not-allowed opacity-30"
-                  : "hover:bg-destructive/15 hover:text-destructive",
-              )}
-              title="Stop server"
-              disabled={isConnecting}
-              data-testid="sidebar-signoff-button"
-            >
-              <LogOut className="h-5 w-5" />
-            </button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Stop the GSD web server?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This will shut down the server process and close this tab. Run{" "}
-                <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">npm run gsd:web</code> again to restart.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                onClick={async () => {
-                  await fetch("/api/shutdown", { method: "POST" }).catch(() => {})
-                  setTimeout(() => {
-                    try {
-                      window.close()
-                    } catch {
-                      // ignore
-                    }
-                    setTimeout(() => {
-                      window.location.href = "about:blank"
-                    }, 300)
-                  }, 400)
-                }}
-              >
-                Stop server
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+        <button
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors",
+            isConnecting
+              ? "cursor-not-allowed opacity-30"
+              : "hover:bg-destructive/15 hover:text-destructive",
+          )}
+          title="Exit"
+          disabled={isConnecting}
+          onClick={() => !isConnecting && setExitDialogOpen(true)}
+          data-testid="sidebar-signoff-button"
+        >
+          <LogOut className="h-5 w-5" />
+        </button>
+        <ExitDialog
+          open={exitDialogOpen}
+          onOpenChange={setExitDialogOpen}
+          projectCount={manager.getProjectCount()}
+          activeProjectCwd={activeProjectCwd}
+          onCloseProject={(cwd) => {
+            manager.closeProject(cwd)
+            onViewChange("dashboard")
+            setExitDialogOpen(false)
+          }}
+          onStopServer={async () => {
+            await fetch("/api/shutdown", { method: "POST" }).catch(() => {})
+            setTimeout(() => {
+              try { window.close() } catch { /* ignore */ }
+              setTimeout(() => { window.location.href = "about:blank" }, 300)
+            }, 400)
+          }}
+        />
       </div>
     </div>
+  )
+}
+
+/* ─── Exit Dialog (multi-project aware) ─── */
+
+function ExitDialog({
+  open,
+  onOpenChange,
+  projectCount,
+  activeProjectCwd,
+  onCloseProject,
+  onStopServer,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  projectCount: number
+  activeProjectCwd: string | null
+  onCloseProject: (cwd: string) => void
+  onStopServer: () => void
+}) {
+  const hasMultipleProjects = projectCount > 1
+  const projectName = activeProjectCwd ? activeProjectCwd.split("/").pop() ?? activeProjectCwd : null
+
+  if (!hasMultipleProjects) {
+    // Single project — simple stop server dialog
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Stop the GSD web server?</DialogTitle>
+            <DialogDescription>
+              This will shut down the server process and close this tab. Run{" "}
+              <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs">gsd --web</code> again to restart.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={onStopServer}
+            >
+              Stop server
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    )
+  }
+
+  // Multiple projects — offer close project vs stop server
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Close project or stop server?</DialogTitle>
+          <DialogDescription>
+            You have {projectCount} projects open. You can close just the current project or stop the entire server.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-2 py-2">
+          {activeProjectCwd && (
+            <Button
+              variant="outline"
+              className="h-auto justify-start gap-3 px-4 py-3 text-left"
+              onClick={() => onCloseProject(activeProjectCwd)}
+            >
+              <FolderKanban className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <div className="text-sm font-medium">Close {projectName}</div>
+                <div className="text-xs text-muted-foreground">
+                  Disconnect this project and switch to another
+                </div>
+              </div>
+            </Button>
+          )}
+          <Button
+            variant="outline"
+            className="h-auto justify-start gap-3 px-4 py-3 text-left border-destructive/30 hover:bg-destructive/10 hover:text-destructive"
+            onClick={onStopServer}
+          >
+            <LogOut className="h-4 w-4 shrink-0" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Stop server</div>
+              <div className="text-xs text-muted-foreground">
+                Shut down all {projectCount} projects and close the tab
+              </div>
+            </div>
+          </Button>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 

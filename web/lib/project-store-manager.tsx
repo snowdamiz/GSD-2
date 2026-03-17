@@ -73,6 +73,40 @@ export class ProjectStoreManager {
     this.notify()
   }
 
+  /** Close a single project's store and switch to another if it was active. */
+  closeProject(projectCwd: string): void {
+    const store = this.stores.get(projectCwd)
+    if (!store) return
+
+    store.dispose()
+    this.stores.delete(projectCwd)
+
+    // If we closed the active project, switch to another or clear
+    if (this.activeProjectCwd === projectCwd) {
+      const remaining = Array.from(this.stores.keys())
+      if (remaining.length > 0) {
+        // Switch to the first remaining project
+        const next = this.stores.get(remaining[0])!
+        this.activeProjectCwd = remaining[0]
+        next.reconnectSSE()
+      } else {
+        this.activeProjectCwd = null
+      }
+    }
+
+    this.notify()
+  }
+
+  /** Number of active project stores. */
+  getProjectCount(): number {
+    return this.stores.size
+  }
+
+  /** Get all active project paths. */
+  getActiveProjectPaths(): string[] {
+    return Array.from(this.stores.keys())
+  }
+
   private notify(): void {
     for (const listener of this.listeners) listener()
   }
