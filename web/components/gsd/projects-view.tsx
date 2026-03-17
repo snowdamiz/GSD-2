@@ -1,11 +1,10 @@
 "use client"
 
 import { useEffect, useState, useCallback, useSyncExternalStore } from "react"
-import { FolderOpen, Loader2, AlertCircle, Layers, Sparkles, ArrowUpCircle, GitBranch, FolderKanban, ArrowRight, CheckCircle2, FolderRoot } from "lucide-react"
+import { FolderOpen, Loader2, AlertCircle, Layers, Sparkles, ArrowUpCircle, GitBranch, FolderKanban, CheckCircle2, FolderRoot } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useProjectStoreManager } from "@/lib/project-store-manager"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 
 // ─── Types (mirroring server-side ProjectMetadata) ─────────────────────────
 
@@ -266,23 +265,173 @@ export function ProjectsView() {
   )
 }
 
-// ─── Shared Dev Root Setup Component ────────────────────────────────────
+// ─── Folder Picker Dialog ───────────────────────────────────────────────
 
-const SUGGESTED_PATHS = ["~/Projects", "~/Developer", "~/Code", "~/dev"]
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { ChevronRight, Folder, CornerLeftUp } from "lucide-react"
+
+interface BrowseEntry {
+  name: string
+  path: string
+}
+
+interface BrowseResult {
+  current: string
+  parent: string | null
+  entries: BrowseEntry[]
+}
+
+function FolderPickerDialog({
+  open,
+  onOpenChange,
+  onSelect,
+  initialPath,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onSelect: (path: string) => void
+  initialPath?: string | null
+}) {
+  const [currentPath, setCurrentPath] = useState<string>("")
+  const [parentPath, setParentPath] = useState<string | null>(null)
+  const [entries, setEntries] = useState<BrowseEntry[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const browse = useCallback(async (targetPath?: string) => {
+    setLoading(true)
+    setError(null)
+    try {
+      const param = targetPath ? `?path=${encodeURIComponent(targetPath)}` : ""
+      const res = await fetch(`/api/browse-directories${param}`)
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error((body as { error?: string }).error ?? `${res.status}`)
+      }
+      const data: BrowseResult = await res.json()
+      setCurrentPath(data.current)
+      setParentPath(data.parent)
+      setEntries(data.entries)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to browse")
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // Load initial directory when dialog opens
+  useEffect(() => {
+    if (open) {
+      void browse(initialPath ?? undefined)
+    }
+  }, [open, initialPath, browse])
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg gap-0 p-0 overflow-hidden">
+        <DialogHeader className="px-5 pt-5 pb-3">
+          <DialogTitle className="text-base">Choose Folder</DialogTitle>
+          <DialogDescription className="text-xs">
+            Navigate to the folder that contains your project directories.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Current path breadcrumb */}
+        <div className="border-y border-border/40 bg-muted/30 px-5 py-2">
+          <p className="font-mono text-xs text-muted-foreground truncate" title={currentPath}>
+            {currentPath}
+          </p>
+        </div>
+
+        {/* Directory listing */}
+        <ScrollArea className="h-[320px]">
+          <div className="px-2 py-1">
+            {loading && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            )}
+
+            {error && (
+              <div className="px-3 py-4 text-center text-xs text-red-400">{error}</div>
+            )}
+
+            {!loading && !error && (
+              <>
+                {/* Parent directory */}
+                {parentPath && (
+                  <button
+                    onClick={() => void browse(parentPath)}
+                    className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50"
+                  >
+                    <CornerLeftUp className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-muted-foreground">..</span>
+                  </button>
+                )}
+
+                {/* Subdirectories */}
+                {entries.map((entry) => (
+                  <button
+                    key={entry.path}
+                    onClick={() => void browse(entry.path)}
+                    className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent/50 group"
+                  >
+                    <Folder className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <span className="text-foreground truncate flex-1">{entry.name}</span>
+                    <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                  </button>
+                ))}
+
+                {/* Empty directory */}
+                {!parentPath && entries.length === 0 && (
+                  <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                    No subdirectories
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </ScrollArea>
+
+        <DialogFooter className="border-t border-border/40 px-5 py-3">
+          <Button variant="ghost" size="sm" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => {
+              onSelect(currentPath)
+              onOpenChange(false)
+            }}
+            disabled={!currentPath}
+            className="gap-1.5"
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+            Select This Folder
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+// ─── Dev Root Setup Component (uses folder picker) ──────────────────────
 
 function DevRootSetup({ onSaved, currentRoot }: { onSaved: (root: string) => void; currentRoot?: string | null }) {
-  const [path, setPath] = useState(currentRoot ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
-  const handleSave = useCallback(async () => {
-    const trimmed = path.trim()
-    if (!trimmed) {
-      setError("Enter a path to your projects folder")
-      return
-    }
-
+  const handleSave = useCallback(async (selectedPath: string) => {
     setSaving(true)
     setError(null)
     setSuccess(false)
@@ -291,7 +440,7 @@ function DevRootSetup({ onSaved, currentRoot }: { onSaved: (root: string) => voi
       const res = await fetch("/api/preferences", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ devRoot: trimmed }),
+        body: JSON.stringify({ devRoot: selectedPath }),
       })
 
       if (!res.ok) {
@@ -302,73 +451,53 @@ function DevRootSetup({ onSaved, currentRoot }: { onSaved: (root: string) => voi
       }
 
       setSuccess(true)
-      onSaved(trimmed)
+      onSaved(selectedPath)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save preference")
     } finally {
       setSaving(false)
     }
-  }, [path, onSaved])
+  }, [onSaved])
 
   const isCompact = !!currentRoot
 
   if (isCompact) {
-    // Compact inline form for settings panel and project header
+    // Compact inline form for settings panel
     return (
       <div className="space-y-3" data-testid="devroot-settings">
-        <div className="flex gap-2">
-          <Input
-            value={path}
-            onChange={(e) => {
-              setPath(e.target.value)
-              if (error) setError(null)
-              if (success) setSuccess(false)
-            }}
-            placeholder="/Users/you/Projects"
-            className={cn(
-              "h-9 font-mono text-sm flex-1",
-              error && "border-red-500/50 focus-visible:ring-red-500/30",
-            )}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && path.trim()) void handleSave()
-            }}
-          />
+        <div className="flex items-center gap-2">
+          <code className="flex-1 truncate rounded border border-border/40 bg-muted/30 px-3 py-2 font-mono text-xs text-foreground">
+            {currentRoot}
+          </code>
           <Button
             size="sm"
-            onClick={() => void handleSave()}
-            disabled={saving || !path.trim() || (path.trim() === currentRoot)}
+            variant="outline"
+            onClick={() => setPickerOpen(true)}
+            disabled={saving}
             className="h-9 gap-1.5 shrink-0"
           >
             {saving ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : success ? (
-              <CheckCircle2 className="h-3.5 w-3.5" />
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
             ) : (
-              "Save"
+              <>
+                <FolderOpen className="h-3.5 w-3.5" />
+                Change
+              </>
             )}
           </Button>
         </div>
 
-        <div className="flex flex-wrap gap-1.5">
-          {SUGGESTED_PATHS.map((suggestion) => (
-            <button
-              key={suggestion}
-              type="button"
-              onClick={() => { setPath(suggestion); setError(null); setSuccess(false) }}
-              className={cn(
-                "rounded-full border px-2.5 py-0.5 font-mono text-[11px] transition-colors",
-                path === suggestion
-                  ? "border-foreground/30 bg-foreground/10 text-foreground"
-                  : "border-border/60 bg-card/40 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
-              )}
-            >
-              {suggestion}
-            </button>
-          ))}
-        </div>
-
         {error && <p className="text-xs text-red-400">{error}</p>}
         {success && <p className="text-xs text-emerald-400">Dev root updated</p>}
+
+        <FolderPickerDialog
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          onSelect={(path) => void handleSave(path)}
+          initialPath={currentRoot}
+        />
       </div>
     )
   }
@@ -387,63 +516,29 @@ function DevRootSetup({ onSaved, currentRoot }: { onSaved: (root: string) => voi
           </p>
         </div>
 
-        <div className="w-full space-y-3">
-          <div className="flex gap-2">
-            <Input
-              value={path}
-              onChange={(e) => {
-                setPath(e.target.value)
-                if (error) setError(null)
-              }}
-              placeholder="/Users/you/Projects"
-              className={cn(
-                "h-10 font-mono text-sm flex-1",
-                error && "border-red-500/50 focus-visible:ring-red-500/30",
-              )}
-              data-testid="projects-devroot-input"
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && path.trim()) void handleSave()
-              }}
-            />
-            <Button
-              onClick={() => void handleSave()}
-              disabled={saving || !path.trim()}
-              className="h-10 gap-2 shrink-0"
-              data-testid="projects-devroot-save"
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  Set Root
-                  <ArrowRight className="h-4 w-4" />
-                </>
-              )}
-            </Button>
-          </div>
+        <Button
+          onClick={() => setPickerOpen(true)}
+          disabled={saving}
+          className="h-11 gap-2.5 px-6"
+          data-testid="projects-devroot-browse"
+        >
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <>
+              <FolderOpen className="h-4 w-4" />
+              Browse for Folder
+            </>
+          )}
+        </Button>
 
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <span className="text-[11px] text-muted-foreground">Suggestions:</span>
-            {SUGGESTED_PATHS.map((suggestion) => (
-              <button
-                key={suggestion}
-                type="button"
-                onClick={() => { setPath(suggestion); setError(null) }}
-                className={cn(
-                  "rounded-full border px-2.5 py-0.5 font-mono text-[11px] transition-colors",
-                  path === suggestion
-                    ? "border-foreground/30 bg-foreground/10 text-foreground"
-                    : "border-border/60 bg-card/40 text-muted-foreground hover:border-foreground/20 hover:text-foreground",
-                )}
-              >
-                {suggestion}
-              </button>
-            ))}
-          </div>
+        {error && <p className="text-sm text-red-400">{error}</p>}
 
-          {error && <p className="text-sm text-red-400">{error}</p>}
-        </div>
+        <FolderPickerDialog
+          open={pickerOpen}
+          onOpenChange={setPickerOpen}
+          onSelect={(path) => void handleSave(path)}
+        />
       </div>
     </div>
   )
