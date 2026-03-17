@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useCallback, useState } from "react"
+import { useTheme } from "next-themes"
 import { Plus, X, TerminalSquare, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import "@xterm/xterm/css/xterm.css"
@@ -21,9 +22,9 @@ interface ShellTerminalProps {
   command?: string
 }
 
-// ─── xterm theme ──────────────────────────────────────────────────────────────
+// ─── xterm themes ─────────────────────────────────────────────────────────────
 
-const XTERM_THEME = {
+const XTERM_DARK_THEME = {
   background: "#0a0a0a",
   foreground: "#e4e4e7",
   cursor: "#e4e4e7",
@@ -48,18 +49,49 @@ const XTERM_THEME = {
   brightWhite: "#fafafa",
 } as const
 
-const XTERM_OPTIONS = {
-  cursorBlink: true,
-  cursorStyle: "bar" as const,
-  fontSize: 13,
-  fontFamily:
-    "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
-  lineHeight: 1.35,
-  letterSpacing: 0,
-  theme: XTERM_THEME,
-  allowProposedApi: true,
-  scrollback: 10000,
-  convertEol: false,
+const XTERM_LIGHT_THEME = {
+  background: "#f5f5f5",
+  foreground: "#1a1a1a",
+  cursor: "#1a1a1a",
+  cursorAccent: "#f5f5f5",
+  selectionBackground: "#d4d4d8",
+  selectionForeground: "#1a1a1a",
+  black: "#1a1a1a",
+  red: "#dc2626",
+  green: "#16a34a",
+  yellow: "#ca8a04",
+  blue: "#2563eb",
+  magenta: "#9333ea",
+  cyan: "#0891b2",
+  white: "#e4e4e7",
+  brightBlack: "#71717a",
+  brightRed: "#ef4444",
+  brightGreen: "#22c55e",
+  brightYellow: "#eab308",
+  brightBlue: "#3b82f6",
+  brightMagenta: "#a855f7",
+  brightCyan: "#06b6d4",
+  brightWhite: "#fafafa",
+} as const
+
+function getXtermTheme(isDark: boolean) {
+  return isDark ? XTERM_DARK_THEME : XTERM_LIGHT_THEME
+}
+
+function getXtermOptions(isDark: boolean) {
+  return {
+    cursorBlink: true,
+    cursorStyle: "bar" as const,
+    fontSize: 13,
+    fontFamily:
+      "'SF Mono', 'Cascadia Code', 'Fira Code', Menlo, Monaco, 'Courier New', monospace",
+    lineHeight: 1.35,
+    letterSpacing: 0,
+    theme: getXtermTheme(isDark),
+    allowProposedApi: true,
+    scrollback: 10000,
+    convertEol: false,
+  }
 }
 
 // ─── Single terminal instance (internal) ──────────────────────────────────────
@@ -68,6 +100,7 @@ interface TerminalInstanceProps {
   sessionId: string
   visible: boolean
   command?: string
+  isDark: boolean
   onConnectionChange: (connected: boolean) => void
 }
 
@@ -75,6 +108,7 @@ function TerminalInstance({
   sessionId,
   visible,
   command,
+  isDark,
   onConnectionChange,
 }: TerminalInstanceProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -131,6 +165,13 @@ function TerminalInstance({
     onConnectionChangeRef.current = onConnectionChange
   }, [onConnectionChange])
 
+  // Update xterm theme when isDark changes
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.theme = getXtermTheme(isDark)
+    }
+  }, [isDark])
+
   // Re-fit when visibility changes
   useEffect(() => {
     if (visible && fitAddonRef.current && termRef.current) {
@@ -165,7 +206,7 @@ function TerminalInstance({
 
       if (disposed) return
 
-      terminal = new Terminal(XTERM_OPTIONS)
+      terminal = new Terminal(getXtermOptions(isDark))
       fitAddon = new FitAddon()
       terminal.loadAddon(fitAddon)
       terminal.open(containerRef.current!)
@@ -251,7 +292,7 @@ function TerminalInstance({
 
   return (
     <div
-      className={cn("h-full w-full bg-[#0a0a0a]", !visible && "hidden")}
+      className={cn("h-full w-full bg-terminal", !visible && "hidden")}
       onClick={handleClick}
     >
       <div
@@ -266,6 +307,8 @@ function TerminalInstance({
 // ─── Multi-instance terminal panel ────────────────────────────────────────────
 
 export function ShellTerminal({ className, command }: ShellTerminalProps) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme !== "light"
   const defaultId = command ? `gsd-default` : "default"
   const [tabs, setTabs] = useState<TerminalTab[]>([
     { id: defaultId, label: command ? "pi" : "zsh", connected: false },
@@ -321,7 +364,7 @@ export function ShellTerminal({ className, command }: ShellTerminalProps) {
   )
 
   return (
-    <div className={cn("flex bg-[#0a0a0a]", className)}>
+    <div className={cn("flex bg-terminal", className)}>
       {/* Terminal area */}
       <div className="relative flex-1 min-w-0">
         {tabs.map((tab) => (
@@ -330,23 +373,24 @@ export function ShellTerminal({ className, command }: ShellTerminalProps) {
             sessionId={tab.id}
             visible={tab.id === activeTabId}
             command={command}
+            isDark={isDark}
             onConnectionChange={(c) => updateConnection(tab.id, c)}
           />
         ))}
       </div>
 
       {/* Sidebar — tab list */}
-      <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-zinc-800/60 bg-[#0c0c0c]">
+      <div className="flex w-[34px] flex-shrink-0 flex-col border-l border-border/40 bg-terminal">
         {/* New terminal button */}
         <button
           onClick={createTab}
-          className="flex h-[30px] w-full items-center justify-center text-zinc-600 transition-colors hover:bg-zinc-800/50 hover:text-zinc-400"
+          className="flex h-[30px] w-full items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
           title="New terminal"
         >
           <Plus className="h-3 w-3" />
         </button>
 
-        <div className="h-px bg-zinc-800/50" />
+        <div className="h-px bg-border/40" />
 
         {/* Tab list */}
         <div className="flex-1 overflow-y-auto">
@@ -357,14 +401,14 @@ export function ShellTerminal({ className, command }: ShellTerminalProps) {
               className={cn(
                 "group relative flex h-[30px] w-full items-center justify-center transition-colors",
                 tab.id === activeTabId
-                  ? "bg-zinc-800/60 text-zinc-300"
-                  : "text-zinc-600 hover:bg-zinc-800/30 hover:text-zinc-400",
+                  ? "bg-accent text-accent-foreground"
+                  : "text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground",
               )}
               title={`${tab.label} ${index + 1}`}
             >
               {/* Active indicator bar */}
               {tab.id === activeTabId && (
-                <div className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-full bg-zinc-500" />
+                <div className="absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-full bg-muted-foreground" />
               )}
 
               <div className="relative flex items-center">
@@ -372,8 +416,8 @@ export function ShellTerminal({ className, command }: ShellTerminalProps) {
                 {/* Connection dot */}
                 <span
                   className={cn(
-                    "absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-[#0c0c0c]",
-                    tab.connected ? "bg-emerald-500" : "bg-zinc-700",
+                    "absolute -bottom-0.5 -right-0.5 h-1.5 w-1.5 rounded-full border border-terminal",
+                    tab.connected ? "bg-emerald-500" : "bg-muted-foreground/40",
                   )}
                 />
               </div>
@@ -385,7 +429,7 @@ export function ShellTerminal({ className, command }: ShellTerminalProps) {
                     e.stopPropagation()
                     closeTab(tab.id)
                   }}
-                  className="absolute -right-0.5 -top-0.5 z-10 hidden h-3.5 w-3.5 items-center justify-center rounded-full bg-zinc-800 text-zinc-500 hover:bg-red-500/20 hover:text-red-400 group-hover:flex"
+                  className="absolute -right-0.5 -top-0.5 z-10 hidden h-3.5 w-3.5 items-center justify-center rounded-full bg-accent text-muted-foreground hover:bg-red-500/20 hover:text-red-400 group-hover:flex"
                   title="Kill terminal"
                 >
                   <X className="h-2 w-2" />
