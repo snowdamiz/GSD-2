@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useCallback, useState, KeyboardEvent } from "react"
-import { MessagesSquare, SendHorizonal, Check, Eye, EyeOff, Play, Loader2, Milestone, X, MessageCircle, MapPin } from "lucide-react"
+import { MessagesSquare, SendHorizonal, Check, Eye, EyeOff, Play, Loader2, Milestone, X, MessageCircle } from "lucide-react"
 import { AnimatePresence, motion } from "motion/react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -27,11 +27,12 @@ export interface ActionPanelConfig {
   accentColor: string
 }
 
-/** Actions available to trigger a panel — independent of workflow phase buttons from T01. */
-const PANEL_ACTIONS: Array<Omit<ActionPanelConfig, "sessionId">> = [
-  { label: "Discuss", command: "/gsd", accentColor: "sky" },
-  { label: "Plan", command: "/gsd", accentColor: "amber" },
-]
+/** Discuss action config — triggers a secondary PTY session panel. */
+const DISCUSS_ACTION: Omit<ActionPanelConfig, "sessionId"> = {
+  label: "Discuss",
+  command: "/gsd",
+  accentColor: "sky",
+}
 
 /** Map accentColor name → Tailwind top-border + header bg classes */
 function accentClasses(color: string): { border: string; bg: string; text: string } {
@@ -140,7 +141,6 @@ export function ChatMode({ className }: { className?: string }) {
         onPrimaryAction={handlePrimaryAction}
         onSecondaryAction={handleSecondaryAction}
         onNewMilestone={() => setMilestoneDialogOpen(true)}
-        onOpenPanel={openPanel}
       />
 
       {/* ── Main pane + optional right panel ── */}
@@ -153,6 +153,7 @@ export function ChatMode({ className }: { className?: string }) {
             "min-w-0 transition-[width] duration-300",
             actionPanelState ? "w-[58%]" : "flex-1",
           )}
+          onOpenDiscuss={() => openPanel(DISCUSS_ACTION)}
         />
 
         {/* Vertical divider — only visible when panel is open */}
@@ -198,24 +199,20 @@ interface ChatModeHeaderProps {
   onPrimaryAction: (command: string) => void
   onSecondaryAction: (command: string) => void
   onNewMilestone: () => void
-  onOpenPanel: (action: Omit<ActionPanelConfig, "sessionId">) => void
 }
 
 /**
  * ChatModeHeader — action toolbar for Chat Mode.
  *
- * Mirrors the Power Mode toolbar (dual-terminal.tsx) but is prop-driven:
- * callers provide action handlers rather than inline logic.
- *
- * Also renders a secondary row of "phase action" buttons that open ActionPanel.
+ * Single-row layout matching the Power User Mode header: title + badge left-aligned,
+ * workflow action buttons immediately to the right (no second row).
  *
  * Observability:
  *   - data-testid="chat-mode-action-bar" on the workflow button row
  *   - data-testid="chat-primary-action" on the primary button
  *   - data-testid="chat-secondary-action-{command}" on each secondary button
- *   - data-testid="chat-panel-trigger-{label}" on each panel trigger button
  */
-function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone, onOpenPanel }: ChatModeHeaderProps) {
+function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone }: ChatModeHeaderProps) {
   const state = useGSDWorkspaceState()
 
   const boot = state.boot
@@ -252,24 +249,18 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone, on
     return phase
   })()
 
-  // Show panel trigger buttons only when workspace is ready and auto is not running
-  const showPanelTriggers =
-    state.bootStatus === "ready" && workspace !== null && !(auto?.active && !auto?.paused)
-
   return (
-    <div className="flex flex-shrink-0 flex-col border-b border-border bg-card">
-      {/* Top row: title + workflow actions */}
-      <div className="flex h-11 items-center justify-between px-4">
-        {/* Left: title + state badge */}
+    <div className="flex items-center justify-between border-b border-border bg-card px-4 py-2">
+      {/* Left: title + state badge + workflow actions inline */}
+      <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
           <MessagesSquare className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium text-foreground">Chat Mode</span>
+          <span className="font-medium">Chat Mode</span>
           <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
             {stateBadge}
           </span>
         </div>
-
-        {/* Right: workflow action bar */}
+        {/* Compact workflow action bar — same pattern as Power User Mode */}
         <div className="flex items-center gap-2" data-testid="chat-mode-action-bar">
           {workflowAction.primary && (
             <button
@@ -317,36 +308,6 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone, on
           )}
         </div>
       </div>
-
-      {/* Bottom row: phase action buttons that open the right panel */}
-      {showPanelTriggers && (
-        <div className="flex items-center gap-1.5 border-t border-border/40 px-4 py-1.5">
-          {PANEL_ACTIONS.map((action) => {
-            const accent = accentClasses(action.accentColor)
-            const icon =
-              action.label === "Discuss" ? (
-                <MessageCircle className={cn("h-3 w-3", accent.text)} />
-              ) : action.label === "Plan" ? (
-                <MapPin className={cn("h-3 w-3", accent.text)} />
-              ) : null
-            return (
-              <button
-                key={action.label}
-                data-testid={`chat-panel-trigger-${action.label.toLowerCase()}`}
-                onClick={() => onOpenPanel(action)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent",
-                  `hover:${accent.border}`,
-                )}
-                title={`Open ${action.label} panel`}
-              >
-                {icon}
-                <span>{action.label}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
     </div>
   )
 }
@@ -438,6 +399,7 @@ function ActionPanel({
         sessionId={config.sessionId}
         command="pi"
         initialCommand={config.command}
+        suppressInitialEcho
         onCompletionSignal={handleCompletionSignal}
         className="flex-1 overflow-hidden"
       />
@@ -616,7 +578,7 @@ function MarkdownContent({ content }: { content: string }) {
         })
 
         setRendered(
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={buildComponents(highlighter)}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={buildComponents(highlighter) as import("react-markdown").Components}>
             {content}
           </ReactMarkdown>,
         )
@@ -1168,13 +1130,16 @@ function ChatMessageList({
  * - Shift+Enter: insert newline (multiline)
  * - Disabled when disconnected; shows "Disconnected" badge
  * - Send button visible when input has content and connected
+ * - Discuss button (left of send) opens the Discuss action panel
  */
 function ChatInputBar({
   onSendInput,
   connected,
+  onOpenDiscuss,
 }: {
   onSendInput: (data: string) => void
   connected: boolean
+  onOpenDiscuss?: () => void
 }) {
   const [value, setValue] = useState("")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -1210,50 +1175,66 @@ function ChatInputBar({
 
   return (
     <div className="flex-shrink-0 border-t border-border bg-card/80 px-4 py-3 backdrop-blur-sm">
-      <div
-        className={cn(
-          "flex items-end gap-2 rounded-xl border bg-background transition-colors",
-          connected
-            ? "border-border focus-within:border-border/80 focus-within:ring-1 focus-within:ring-border/30"
-            : "border-border/40 opacity-60",
-        )}
-      >
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={handleInput}
-          onKeyDown={handleKeyDown}
-          disabled={!connected}
-          rows={1}
-          aria-label="Send message"
-          placeholder={
+      <div className="flex items-end gap-2">
+        {/* Input + send button */}
+        <div
+          className={cn(
+            "flex flex-1 items-end gap-2 rounded-xl border bg-background transition-colors",
             connected
-              ? "Send a message… (Enter to send, Shift+Enter for newline)"
-              : "Connecting…"
-          }
-          className="min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none disabled:cursor-not-allowed disabled:text-muted-foreground"
-          style={{ height: "40px", maxHeight: "160px", overflowY: "auto" }}
-        />
-        <div className="flex flex-shrink-0 items-end pb-1.5 pr-1.5 gap-1">
-          {!connected && (
-            <span className="px-2 py-1 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wide">
-              Disconnected
-            </span>
+              ? "border-border focus-within:border-border/80 focus-within:ring-1 focus-within:ring-border/30"
+              : "border-border/40 opacity-60",
           )}
-          <button
-            onClick={handleSend}
-            disabled={!connected || !hasContent}
-            aria-label="Send"
-            className={cn(
-              "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
-              hasContent && connected
-                ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-95"
-                : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+        >
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={handleInput}
+            onKeyDown={handleKeyDown}
+            disabled={!connected}
+            rows={1}
+            aria-label="Send message"
+            placeholder={
+              connected
+                ? "Send a message… (Enter to send, Shift+Enter for newline)"
+                : "Connecting…"
+            }
+            className="min-h-[40px] flex-1 resize-none bg-transparent px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none disabled:cursor-not-allowed disabled:text-muted-foreground"
+            style={{ height: "40px", maxHeight: "160px", overflowY: "auto" }}
+          />
+          <div className="flex flex-shrink-0 items-end pb-1.5 pr-1.5 gap-1">
+            {!connected && (
+              <span className="px-2 py-1 text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wide">
+                Disconnected
+              </span>
             )}
-          >
-            <SendHorizonal className="h-3.5 w-3.5" />
-          </button>
+            <button
+              onClick={handleSend}
+              disabled={!connected || !hasContent}
+              aria-label="Send"
+              className={cn(
+                "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
+                hasContent && connected
+                  ? "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 active:scale-95"
+                  : "bg-muted text-muted-foreground/40 cursor-not-allowed",
+              )}
+            >
+              <SendHorizonal className="h-3.5 w-3.5" />
+            </button>
+          </div>
         </div>
+
+        {/* Discuss button — standalone, right of the input, styled to match input box */}
+        {onOpenDiscuss && (
+          <button
+            onClick={onOpenDiscuss}
+            aria-label="Open Discuss panel"
+            title="Discuss"
+            className="flex flex-shrink-0 self-stretch items-center gap-1.5 rounded-xl border border-border bg-background px-3 text-xs font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <MessageCircle className="h-3.5 w-3.5 text-muted-foreground" />
+            Discuss
+          </button>
+        )}
       </div>
       <p className="mt-1.5 text-center text-[10px] text-muted-foreground/40">
         GSD session · Shift+Enter for newline
@@ -1295,6 +1276,13 @@ interface ChatPaneProps {
   initialCommand?: string
   /** Called when PtyChatParser emits a CompletionSignal (GSD returned to idle). */
   onCompletionSignal?: () => void
+  /** Called when the Discuss button in the input bar is clicked. */
+  onOpenDiscuss?: () => void
+  /**
+   * When true, the first user message that exactly matches initialCommand is hidden.
+   * Used by ActionPanel to suppress the PTY echo of the dispatched slash command.
+   */
+  suppressInitialEcho?: boolean
 }
 
 /**
@@ -1310,7 +1298,7 @@ interface ChatPaneProps {
  *   - In dev mode: window.__chatParser exposes the parser for console inspection
  *   - ChatInputBar shows "Disconnected" badge when SSE is not connected
  */
-export function ChatPane({ sessionId, command, className, initialCommand, onCompletionSignal }: ChatPaneProps) {
+export function ChatPane({ sessionId, command, className, initialCommand, onCompletionSignal, onOpenDiscuss, suppressInitialEcho }: ChatPaneProps) {
   const parserRef = useRef<PtyChatParser | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const inputQueueRef = useRef<string[]>([])
@@ -1422,19 +1410,29 @@ export function ChatPane({ sessionId, command, className, initialCommand, onComp
 
   // ── Render ────────────────────────────────────────────────────────────────
 
+  // Filter messages: when suppressInitialEcho is set, hide user messages that
+  // are just the PTY echo of the initialCommand (slash commands echo before being processed).
+  const visibleMessages = suppressInitialEcho && initialCommand
+    ? messages.filter((msg) => {
+        if (msg.role !== "user") return true
+        const normalized = msg.content.trim()
+        return normalized !== initialCommand.trim()
+      })
+    : messages
+
   return (
     <div className={cn("flex flex-col overflow-hidden", className)}>
       {/* Message list */}
       <div className="flex flex-1 flex-col overflow-hidden">
-        {messages.length === 0 ? (
+        {visibleMessages.length === 0 ? (
           <PlaceholderState connected={connected} />
         ) : (
-          <ChatMessageList messages={messages} onSubmitPrompt={sendInput} />
+          <ChatMessageList messages={visibleMessages} onSubmitPrompt={sendInput} />
         )}
       </div>
 
       {/* Fully wired input bar */}
-      <ChatInputBar onSendInput={sendInput} connected={connected} />
+      <ChatInputBar onSendInput={sendInput} connected={connected} onOpenDiscuss={onOpenDiscuss} />
     </div>
   )
 }
