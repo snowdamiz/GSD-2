@@ -81,6 +81,12 @@ export type BrowserSlashCommandDispatchResult =
       reason: string
       guidance: string
     }
+  | {
+      kind: "view-navigate"
+      input: string
+      commandName: string
+      view: string
+    }
 
 export interface BrowserSlashCommandTerminalNotice {
   type: "system" | "error"
@@ -182,6 +188,16 @@ function dispatchGSDSubcommand(
       input,
       commandName: "gsd",
       action: "gsd_help",
+    }
+  }
+
+  // `/gsd visualize` — navigate to the visualizer view directly
+  if (subcommand === "visualize") {
+    return {
+      kind: "view-navigate",
+      input,
+      commandName: "gsd",
+      view: "visualize",
     }
   }
 

@@ -7,6 +7,7 @@ import { Dashboard } from "@/components/gsd/dashboard"
 import { Roadmap } from "@/components/gsd/roadmap"
 import { FilesView } from "@/components/gsd/files-view"
 import { ActivityView } from "@/components/gsd/activity-view"
+import { VisualizerView } from "@/components/gsd/visualizer-view"
 import { StatusBar } from "@/components/gsd/status-bar"
 import { DualTerminal } from "@/components/gsd/dual-terminal"
 import { FocusedPanel } from "@/components/gsd/focused-panel"
@@ -59,7 +60,7 @@ function connectionDotClass(tone: ReturnType<typeof getStatusPresentation>["tone
   }
 }
 
-const KNOWN_VIEWS = new Set(["dashboard", "power", "roadmap", "files", "activity"])
+const KNOWN_VIEWS = new Set(["dashboard", "power", "roadmap", "files", "activity", "visualize"])
 
 function viewStorageKey(projectCwd: string): string {
   return `gsd-active-view:${projectCwd}`
@@ -133,6 +134,17 @@ function WorkspaceChrome() {
     window.addEventListener("gsd:open-file", handler)
     return () => window.removeEventListener("gsd:open-file", handler)
   }, [])
+
+  // Listen for cross-component view navigation events (e.g. /gsd visualize dispatch)
+  useEffect(() => {
+    const handler = (e: CustomEvent<{ view: string }>) => {
+      if (KNOWN_VIEWS.has(e.detail.view)) {
+        handleViewChange(e.detail.view)
+      }
+    }
+    window.addEventListener("gsd:navigate-view", handler as EventListener)
+    return () => window.removeEventListener("gsd:navigate-view", handler as EventListener)
+  }, [handleViewChange])
 
   // Terminal panel drag-to-resize
   useEffect(() => {
@@ -270,6 +282,7 @@ function WorkspaceChrome() {
                 {activeView === "roadmap" && <Roadmap />}
                 {activeView === "files" && <FilesView />}
                 {activeView === "activity" && <ActivityView />}
+                {activeView === "visualize" && <VisualizerView />}
               </>
             )}
           </div>

@@ -3557,6 +3557,18 @@ export class GSDWorkspaceStore {
         this.patchState({ terminalLines: nextLines })
         return outcome
       }
+      case "view-navigate": {
+        this.patchState({
+          terminalLines: withTerminalLine(
+            this.state.terminalLines,
+            createTerminalLine("system", `Navigating to ${outcome.view} view`),
+          ),
+        })
+        window.dispatchEvent(
+          new CustomEvent("gsd:navigate-view", { detail: { view: outcome.view } }),
+        )
+        return outcome
+      }
     }
   }
 

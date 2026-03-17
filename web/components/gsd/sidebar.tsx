@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   Map as MapIcon,
   Activity,
+  BarChart3,
   Columns2,
   LifeBuoy,
   LogOut,
@@ -73,6 +74,7 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
     { id: "roadmap", label: "Roadmap", icon: MapIcon },
     { id: "files", label: "Files", icon: Folder },
     { id: "activity", label: "Activity", icon: Activity },
+    { id: "visualize", label: "Visualize", icon: BarChart3 },
   ]
 
   return (

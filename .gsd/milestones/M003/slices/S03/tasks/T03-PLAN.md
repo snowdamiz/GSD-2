@@ -81,3 +81,10 @@ Connects the `VisualizerView` component (from T02) to the rest of the app so use
 - `web/components/gsd/sidebar.tsx` — modified: navItems includes Visualize entry with BarChart3 icon
 - `web/lib/browser-slash-command-dispatch.ts` — modified: `"visualize"` subcommand returns view-navigate result
 - `web/lib/gsd-workspace-store.tsx` — modified: handles view-navigate dispatch result by emitting `gsd:navigate-view` event
+
+## Observability Impact
+
+- **New CustomEvent channel:** `gsd:navigate-view` — dispatched from `gsd-workspace-store.tsx` when `/gsd visualize` is entered. Listened by `app-shell.tsx`. Inspect via browser DevTools → Event Listeners on `window` or by searching for `gsd:navigate-view` in the codebase.
+- **Terminal feedback:** `/gsd visualize` now prints `"Navigating to visualize view"` as a system terminal line instead of the old surface reservation notice. Visible in the embedded terminal output.
+- **Dispatch kind:** New `"view-navigate"` dispatch result kind in `browser-slash-command-dispatch.ts`. Any code that exhaustively switches on `BrowserSlashCommandDispatchResult.kind` must now handle this case.
+- **Failure modes:** If `gsd:navigate-view` event is dispatched but no listener is registered (e.g. app-shell not mounted), navigation silently fails — the terminal line still appears but the view doesn't change. Inspect by checking `KNOWN_VIEWS` set membership and the event listener registration in app-shell.

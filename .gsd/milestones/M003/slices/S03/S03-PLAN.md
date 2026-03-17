@@ -59,7 +59,7 @@
   - Verify: `npm run build:web-host` exits 0
   - Done when: Component compiles with all 7 tabs rendering their respective data sections
 
-- [ ] **T03: Wire visualizer into app-shell, sidebar, and dispatch** `est:30m`
+- [x] **T03: Wire visualizer into app-shell, sidebar, and dispatch** `est:30m`
   - Why: Connects the visualizer view to the rest of the app so users can actually reach it — sidebar navigation, app-shell rendering, and `/gsd visualize` slash command dispatch.
   - Files: `web/components/gsd/app-shell.tsx`, `web/components/gsd/sidebar.tsx`, `web/components/gsd/command-surface.tsx`, `web/lib/browser-slash-command-dispatch.ts`, `web/lib/gsd-workspace-store.tsx`
   - Do: (1) In `app-shell.tsx`: add `"visualize"` to `KNOWN_VIEWS` set, import `VisualizerView`, add `{activeView === "visualize" && <VisualizerView />}` render branch. (2) In `sidebar.tsx`: add `{ id: "visualize", label: "Visualize", icon: BarChart3 }` to `navItems` array (import `BarChart3` from lucide-react). (3) For `/gsd visualize` dispatch: make the dispatch navigate to the visualizer view instead of opening the command surface generic placeholder. In the workspace store's `dispatchSlashCommand` method (or in the dispatch function), detect `outcome.surface === "gsd-visualize"` and emit `window.dispatchEvent(new CustomEvent("gsd:navigate-view", { detail: { view: "visualize" } }))` instead of opening the command surface. In `app-shell.tsx`, add a `gsd:navigate-view` event listener (parallel to the existing `gsd:open-file` listener) that calls `handleViewChange(event.detail.view)`. (4) Optionally clean up the generic `gsd-` placeholder in command-surface.tsx to no longer match `gsd-visualize` (since it now navigates directly).
