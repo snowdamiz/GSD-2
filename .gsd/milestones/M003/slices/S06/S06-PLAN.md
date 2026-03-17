@@ -25,6 +25,7 @@
 - `npm run build` — TypeScript compiles with all new types and imports
 - `npm run build:web-host` — Next.js production build succeeds with new API route and components
 - `npx tsx --test src/tests/web-command-parity-contract.test.ts` — 118 tests still pass (no dispatch regression)
+- `GET /api/settings-data` returns 500 with `{ error: string }` when upstream modules are missing or fail (structured error, not crash)
 
 ## Observability / Diagnostics
 
@@ -40,7 +41,7 @@
 
 ## Tasks
 
-- [ ] **T01: Add settings types, child-process service, and API route** `est:40m`
+- [x] **T01: Add settings types, child-process service, and API route** `est:40m`
   - Why: The data pipeline must exist before the UI can render. Types define the browser-safe contract, the service provides the data, and the API route exposes it to the frontend.
   - Files: `web/lib/settings-types.ts`, `src/web/settings-service.ts`, `web/app/api/settings-data/route.ts`
   - Do: (1) Create `web/lib/settings-types.ts` with browser-safe interfaces mirroring upstream types: `SettingsPreferencesData` (effective merged preferences), `SettingsRoutingConfig` (dynamic routing config + tier assignments), `SettingsBudgetData` (allocation + ceiling + enforcement + project totals), `SettingsRoutingHistory` (pattern history + feedback), and the combined `SettingsData` payload. (2) Create `src/web/settings-service.ts` following the `forensics-service.ts` pattern: child-process via `execFile` + `resolve-ts.mjs` + `--experimental-strip-types` that imports upstream modules, calls the 5 data functions, serializes a combined JSON payload to stdout. Must `initRoutingHistory(base)` before `getRoutingHistory()`. Must handle null returns from `loadLedgerFromDisk()` and `getRoutingHistory()`. Pass `projectCwd` via env var. (3) Create `web/app/api/settings-data/route.ts` following the `forensics/route.ts` pattern: GET handler calling `collectSettingsData()`, returning JSON with no-store cache.

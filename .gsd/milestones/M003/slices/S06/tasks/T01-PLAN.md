@@ -96,3 +96,9 @@ The child process must call 5 upstream functions across 4 modules (`preferences.
 - `web/lib/settings-types.ts` — new file with ~80-100 lines of browser-safe interfaces
 - `src/web/settings-service.ts` — new file with ~120-150 lines following forensics-service pattern
 - `web/app/api/settings-data/route.ts` — new file with ~25 lines following forensics route pattern
+
+## Observability Impact
+
+- **New inspection surface:** `GET /api/settings-data` returns combined `SettingsData` JSON (preferences, routingConfig, budgetAllocation, routingHistory, projectTotals) or 500 with `{ error: string }` on failure.
+- **Failure visibility:** Child-process stderr is included in error messages; missing module paths are reported with checked paths. Parse failures include the JSON parse error detail.
+- **Future agent inspection:** `curl http://localhost:3000/api/settings-data | jq .` reveals current settings state. Non-null fields confirm upstream modules are reachable; null `routingHistory`/`projectTotals` indicates missing `.gsd/routing-history.json` or `.gsd/metrics.json` (expected when no units have run).
