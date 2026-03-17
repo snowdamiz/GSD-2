@@ -48,7 +48,7 @@
 
 ## Tasks
 
-- [ ] **T01: Create browser-safe types and extend command surface state contract** `est:25m`
+- [x] **T01: Create browser-safe types and extend command surface state contract** `est:25m`
   - Why: All panel components and store actions depend on typed data shapes. The state contract needs phase-tracked slices for surfaces that load data. This unblocks T02, T03, and T04.
   - Files: `web/lib/remaining-command-types.ts` (NEW), `web/lib/command-surface-contract.ts` (EDIT)
   - Do: Create `remaining-command-types.ts` with browser-safe mirrors of upstream types (HistoryData, InspectData, HookStatusEntry, ExportResult, UndoInfo, CleanupData, SteerData). Add a `CommandSurfaceRemainingState` interface to `command-surface-contract.ts` with `CommandSurfaceDiagnosticsPhaseState<T>` slices for each data-bearing surface. Wire into the command surface initial state.

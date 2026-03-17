@@ -93,6 +93,12 @@ Foundation task: define browser-safe TypeScript interfaces mirroring upstream da
   - `src/resources/extensions/gsd/types.ts` — `HookStatusEntry` (name, type, enabled, targets, activeCycles)
   - `src/resources/extensions/gsd/commands.ts` — `InspectData` (schemaVersion, counts, recentDecisions, recentRequirements)
 
+## Observability Impact
+
+- **Signals changed:** `WorkspaceCommandSurfaceState.remainingCommands` gains 7 phase-tracked slices (`history`, `inspect`, `hooks`, `exportData`, `undo`, `cleanup`, `steer`), each with `phase: "idle" | "loading" | "loaded" | "error"`, `data: T | null`, `error: string | null`, and `lastLoadedAt: string | null`. These are observable in React DevTools on the Zustand store.
+- **How to inspect:** `rg "CommandSurfaceRemainingState" web/lib/command-surface-contract.ts` confirms the interface exists. `rg "createInitialRemainingState" web/lib/command-surface-contract.ts` confirms the factory. Both `createInitialCommandSurfaceState()` and `openCommandSurfaceState()` include `remainingCommands` in their return.
+- **Failure visibility:** If this task is incomplete or types are wrong, `npm run build` will fail with TypeScript errors referencing the missing types or mismatched shapes. Downstream tasks (T02–T04) will fail to compile when they reference these types.
+
 ## Expected Output
 
 - `web/lib/remaining-command-types.ts` — ~120 lines of browser-safe TypeScript interfaces

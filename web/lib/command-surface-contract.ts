@@ -2,6 +2,15 @@ import type { BrowserSlashCommandDispatchResult, BrowserSlashCommandSurface } fr
 import type { DoctorFixResult, DoctorReport, ForensicReport, SkillHealthReport } from "./diagnostics-types"
 import type { KnowledgeData, CapturesData, CaptureResolveResult } from "./knowledge-captures-types"
 import type { SettingsData } from "./settings-types"
+import type {
+  HistoryData,
+  InspectData,
+  HooksData,
+  ExportResult,
+  UndoInfo,
+  CleanupData,
+  SteerData,
+} from "./remaining-command-types"
 import type { GitSummaryResponse } from "./git-summary-contract"
 import type {
   SessionBrowserNameFilter,
@@ -404,6 +413,30 @@ export function createInitialSettingsState(): CommandSurfaceSettingsState {
   return createInitialDiagnosticsPhaseState<SettingsData>()
 }
 
+// ─── Remaining command surfaces state ────────────────────────────────────────
+
+export interface CommandSurfaceRemainingState {
+  history: CommandSurfaceDiagnosticsPhaseState<HistoryData>
+  inspect: CommandSurfaceDiagnosticsPhaseState<InspectData>
+  hooks: CommandSurfaceDiagnosticsPhaseState<HooksData>
+  exportData: CommandSurfaceDiagnosticsPhaseState<ExportResult>
+  undo: CommandSurfaceDiagnosticsPhaseState<UndoInfo>
+  cleanup: CommandSurfaceDiagnosticsPhaseState<CleanupData>
+  steer: CommandSurfaceDiagnosticsPhaseState<SteerData>
+}
+
+export function createInitialRemainingState(): CommandSurfaceRemainingState {
+  return {
+    history: createInitialDiagnosticsPhaseState<HistoryData>(),
+    inspect: createInitialDiagnosticsPhaseState<InspectData>(),
+    hooks: createInitialDiagnosticsPhaseState<HooksData>(),
+    exportData: createInitialDiagnosticsPhaseState<ExportResult>(),
+    undo: createInitialDiagnosticsPhaseState<UndoInfo>(),
+    cleanup: createInitialDiagnosticsPhaseState<CleanupData>(),
+    steer: createInitialDiagnosticsPhaseState<SteerData>(),
+  }
+}
+
 export interface WorkspaceCommandSurfaceState {
   open: boolean
   activeSurface: BrowserSlashCommandSurface | null
@@ -423,6 +456,7 @@ export interface WorkspaceCommandSurfaceState {
   diagnostics: CommandSurfaceDiagnosticsState
   knowledgeCaptures: CommandSurfaceKnowledgeCapturesState
   settingsData: CommandSurfaceSettingsState
+  remainingCommands: CommandSurfaceRemainingState
   sessionBrowser: CommandSurfaceSessionBrowserState
   resumeRequest: CommandSurfaceSessionMutationState
   renameRequest: CommandSurfaceSessionMutationState
@@ -600,6 +634,7 @@ export function createInitialCommandSurfaceState(): WorkspaceCommandSurfaceState
     diagnostics: createInitialDiagnosticsState(),
     knowledgeCaptures: createInitialKnowledgeCapturesState(),
     settingsData: createInitialSettingsState(),
+    remainingCommands: createInitialRemainingState(),
     sessionBrowser: createInitialCommandSurfaceSessionBrowserState(),
     resumeRequest: createInitialCommandSurfaceSessionMutationState(),
     renameRequest: createInitialCommandSurfaceSessionMutationState(),
@@ -811,6 +846,7 @@ export function openCommandSurfaceState(
     diagnostics: createInitialDiagnosticsState(),
     knowledgeCaptures: createInitialKnowledgeCapturesState(),
     settingsData: createInitialSettingsState(),
+    remainingCommands: createInitialRemainingState(),
     sessionBrowser: buildInitialSessionBrowserState(request),
     resumeRequest: createInitialCommandSurfaceSessionMutationState(),
     renameRequest: createInitialCommandSurfaceSessionMutationState(),
