@@ -64,7 +64,7 @@ This milestone is complete only when all are true:
 - [x] **S03: Workflow visualizer page** `risk:medium` `depends:[S01]`
   > After this: dedicated visualizer page with 7 tabbed sections (Progress, Deps, Metrics, Timeline, Agent, Changes, Export) showing real project data via API route.
 
-- [ ] **S04: Diagnostics panels — forensics, doctor, skill-health** `risk:medium` `depends:[S02]`
+- [x] **S04: Diagnostics panels — forensics, doctor, skill-health** `risk:medium` `depends:[S02]`
   > After this: three separate browser panels accessible via `/gsd forensics`, `/gsd doctor`, `/gsd skill-health` showing real diagnostic data with actions.
 
 - [ ] **S05: Knowledge and captures/triage page** `risk:medium` `depends:[S02]`

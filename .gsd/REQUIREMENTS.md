@@ -34,8 +34,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M003/S04
 - Supporting slices: M003/S02
-- Validation: unmapped
-- Notes: Upstream forensics.ts provides handleForensics() with ForensicReport containing anomalies, session traces, and doctor issues.
+- Validation: Pipeline verified by `src/tests/web-diagnostics-contract.test.ts` (28/28 pass — type exports, contract state, dispatch→surface, surface→section, store methods). API route `/api/forensics` returns ForensicReport JSON via child-process service. Panel component (ForensicsPanel) renders anomaly list, recent units, crash lock, metrics summary. Both builds pass. Awaits live browser UAT for full validation.
+- Notes: S04 implemented the full pipeline: buildForensicReport exported from forensics.ts → child-process service → API route → store fetch → panel component. ForensicReport simplified for browser (flattened metrics, counted traces). Live runtime UAT needed before marking validated.
 
 ### R104 — A browser panel showing doctor health check results (7 runtime checks), auto-fix actions, severity filtering, and scope selection.
 - Class: failure-visibility
@@ -45,8 +45,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M003/S04
 - Supporting slices: M003/S02
-- Validation: unmapped
-- Notes: Upstream doctor.ts provides runGSDDoctor() with DoctorReport containing issues, auto-fix capability, and scope filtering.
+- Validation: Pipeline verified by `src/tests/web-diagnostics-contract.test.ts` (28/28 pass). API routes: GET `/api/doctor?scope=X` returns DoctorReport JSON; POST `/api/doctor` applies fixes and returns DoctorFixResult. Panel renders issue list with severity/scope badges, fixable count, and Apply Fixes button. Both builds pass. Awaits live browser UAT for full validation.
+- Notes: S04 implemented full doctor pipeline: runGSDDoctor via child-process → GET/POST API routes → store fetch (with fix lifecycle) → DoctorPanel with issue list, severity badges, scope filtering, Apply Fixes button. Doctor POST returns fixesApplied array. Live runtime UAT needed before marking validated.
 
 ### R105 — A browser panel showing per-skill pass/fail rates, token usage, staleness warnings, declining performance flags, and heal-skill suggestions.
 - Class: operability
@@ -56,8 +56,8 @@ This file is the explicit capability and coverage contract for the project.
 - Source: user
 - Primary owning slice: M003/S04
 - Supporting slices: M003/S02
-- Validation: unmapped
-- Notes: Upstream skill-health.ts provides generateSkillHealthReport() with SkillHealthReport.
+- Validation: Pipeline verified by `src/tests/web-diagnostics-contract.test.ts` (28/28 pass). API route GET `/api/skill-health` returns SkillHealthReport JSON. Panel renders skill table with pass rates, token trends, staleness warnings, declining flags, and suggestions. Both builds pass. Awaits live browser UAT for full validation.
+- Notes: S04 implemented full skill-health pipeline: generateSkillHealthReport via child-process → API route → store fetch → SkillHealthPanel with skill table, pass rates, token trends, stale/declining flags, and heal suggestions. Live runtime UAT needed before marking validated.
 
 ### R106 — A dedicated browser page showing KNOWLEDGE.md entries and CAPTURES.md with pending/triaged/resolved status, classification labels, and triage action controls.
 - Class: core-capability
@@ -364,9 +364,9 @@ This file is the explicit capability and coverage contract for the project.
 | R100 | core-capability | validated | M003/S01 | none | `npm run build` exits 0, `npm run build:web-host` exits 0, `rg "^<<<<<<<|^>>>>>>>|^=======$" src/ web/ packages/ .github/` returns empty, `git log --oneline HEAD..upstream/main | wc -l` returns 0. All verified on 2026-03-16 after merging 415 upstream commits (v2.12→v2.22.0) and resolving all 50 file conflicts. |
 | R101 | primary-user-loop | active | M003/S02 | M003/S04, M003/S05, M003/S06, M003/S07 | Verified by updated `src/tests/web-command-parity-contract.test.ts` — exhaustive GSD dispatch test (118 tests) asserts every subcommand has a defined outcome (surface/prompt/local). Contract surface wiring test proves each surface opens correctly through the command-surface system. `npm run build` and `npm run build:web-host` succeed. Runtime diagnostic: `dispatchBrowserSlashCommand("/gsd <subcmd>")` returns inspectable .kind/.surface/.action fields; `getBrowserSlashCommandTerminalNotice()` confirms system notices for surface outcomes and null for passthrough. |
 | R102 | core-capability | active | M003/S03 | none | S03 built: /api/visualizer GET endpoint, VisualizerView component with 7 tabs (Progress, Deps, Metrics, Timeline, Agent, Changes, Export), sidebar NavRail entry, /gsd visualize dispatch. Both builds pass. Remaining: live runtime verification with real project data at S08 parity audit. |
-| R103 | failure-visibility | active | M003/S04 | M003/S02 | unmapped |
-| R104 | failure-visibility | active | M003/S04 | M003/S02 | unmapped |
-| R105 | operability | active | M003/S04 | M003/S02 | unmapped |
+| R103 | failure-visibility | active | M003/S04 | M003/S02 | Pipeline verified by `src/tests/web-diagnostics-contract.test.ts` (28/28 pass — type exports, contract state, dispatch→surface, surface→section, store methods). API route `/api/forensics` returns ForensicReport JSON via child-process service. Panel component (ForensicsPanel) renders anomaly list, recent units, crash lock, metrics summary. Both builds pass. Awaits live browser UAT for full validation. |
+| R104 | failure-visibility | active | M003/S04 | M003/S02 | Pipeline verified by `src/tests/web-diagnostics-contract.test.ts` (28/28 pass). API routes: GET `/api/doctor?scope=X` returns DoctorReport JSON; POST `/api/doctor` applies fixes and returns DoctorFixResult. Panel renders issue list with severity/scope badges, fixable count, and Apply Fixes button. Both builds pass. Awaits live browser UAT for full validation. |
+| R105 | operability | active | M003/S04 | M003/S02 | Pipeline verified by `src/tests/web-diagnostics-contract.test.ts` (28/28 pass). API route GET `/api/skill-health` returns SkillHealthReport JSON. Panel renders skill table with pass rates, token trends, staleness warnings, declining flags, and suggestions. Both builds pass. Awaits live browser UAT for full validation. |
 | R106 | core-capability | active | M003/S05 | M003/S02 | unmapped |
 | R107 | core-capability | active | M003/S06 | M003/S02 | unmapped |
 | R108 | core-capability | active | M003/S07 | M003/S02 | unmapped |
