@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useCallback, useState } from "react"
 import { useTheme } from "next-themes"
-import { Plus, X, TerminalSquare, Trash2 } from "lucide-react"
+import { Plus, X, TerminalSquare, Trash2, Loader2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import "@xterm/xterm/css/xterm.css"
 
@@ -119,6 +119,7 @@ function TerminalInstance({
   const flushingRef = useRef(false)
   const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const onConnectionChangeRef = useRef(onConnectionChange)
+  const [hasOutput, setHasOutput] = useState(false)
 
   const sendResize = useCallback(
     (cols: number, rows: number) => {
@@ -241,6 +242,7 @@ function TerminalInstance({
             if (terminal) sendResize(terminal.cols, terminal.rows)
           } else if (msg.type === "output" && msg.data) {
             terminal?.write(msg.data)
+            setHasOutput(true)
           }
         } catch {
           /* malformed */
@@ -292,9 +294,18 @@ function TerminalInstance({
 
   return (
     <div
-      className={cn("h-full w-full bg-terminal", !visible && "hidden")}
+      className={cn("relative h-full w-full bg-terminal", !visible && "hidden")}
       onClick={handleClick}
     >
+      {/* Loading overlay — visible until first output arrives */}
+      {!hasOutput && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-terminal">
+          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">
+            {command ? "Starting GSD…" : "Connecting…"}
+          </span>
+        </div>
+      )}
       <div
         ref={containerRef}
         className="h-full w-full"
