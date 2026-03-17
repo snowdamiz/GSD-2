@@ -67,3 +67,11 @@ The Tailwind `animate-[chat-cursor_...]` arbitrary value syntax does NOT work fo
 ## MarkdownContent Streaming Update Pattern: Single useEffect([content])
 
 For streaming chat bubbles where content updates frequently, use a single `useEffect([content])` that re-runs the full dynamic import chain. After the first render, all imports resolve instantly from the module cache (no network hit), so re-running is cheap. The two-effect approach (one for module loading, one for content updates) introduces a stale-closure risk where the first effect's `cancelled` flag remains `true` after cleanup and suppresses subsequent updates.
+
+## AnimatePresence Unmount Timing: Use It as the DELETE Trigger, Not Explicit Timeouts
+
+When using `AnimatePresence` with a spring exit animation, React holds the component in the DOM until the exit animation completes before calling the cleanup function of `useEffect`. This means an `ActionPanel` unmount `useEffect` cleanup fires *after* the animation, naturally aligning with the 400ms exit timing. Do NOT schedule a parallel `setTimeout(400ms, DELETE)` in the parent — you'll get double-DELETE. Consolidate teardown into the child component's unmount cleanup and remove any explicit-close DELETEs from the parent.
+
+## hasSentInitialCommand Must Be a Ref, Not State
+
+When sending an initial PTY command after SSE `connected`, use `const hasSentInitialCommand = useRef(false)` (not `useState`). A ref update does not trigger re-render, which prevents the SSE useEffect from re-running (which would reconnect SSE and resend the command). State-based guards would create a feedback loop: state change → effect re-runs → new SSE connection → new `connected` event → command sent again.

@@ -61,7 +61,7 @@
   - Verify: click a panel-triggering button; verify panel slides in from right with correct label and tinted border; verify main pane still shows chat; verify X button closes with animation
   - Done when: panel renders with correct styling, animation works, main pane remains visible alongside
 
-- [ ] **T03: Panel session lifecycle and cleanup** `est:1h`
+- [x] **T03: Panel session lifecycle and cleanup** `est:1h`
   - Why: Without session cleanup, every panel open leaks a PTY session
   - Files: `web/components/gsd/chat-mode.tsx`, `web/app/api/terminal/sessions/route.ts` (verify DELETE exists)
   - Do: (1) Read `web/app/api/terminal/sessions/route.ts` — verify DELETE handler exists; if missing, add it (mirror the DELETE pattern from `web/components/gsd/shell-terminal.tsx` `closeTab` function). (2) Implement `openPanel(cfg)` in `ChatMode`: if panel already open capture old `sessionId`, close first (set state to null), wait 350ms for exit animation, then set new `actionPanelState`. Generate `sessionId = "gsd-action-" + Date.now()`. (3) Implement `closePanel()`: capture `sessionId` from current state, set `actionPanelState = null`; after 350ms DELETE session: `fetch("/api/terminal/sessions?id=${sessionId}", { method: "DELETE" })`. (4) Add `useEffect` cleanup in `ActionPanel` itself: on unmount, DELETE the session as a backstop (prevents leaks if React unmounts without `closePanel` being called — e.g., navigating away from Chat Mode). (5) Test replace behavior: open panel, click a different action — verify old session deleted, new panel opens.

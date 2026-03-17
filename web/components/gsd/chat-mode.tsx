@@ -95,16 +95,8 @@ export function ChatMode({ className }: { className?: string }) {
       if (!current) return null
       const { sessionId } = current
       console.log("[ActionPanel] close reason=manual sessionId=%s", sessionId)
-
-      // Delay DELETE until exit animation completes (~400ms)
-      setTimeout(() => {
-        fetch(`/api/terminal/sessions?id=${encodeURIComponent(sessionId)}`, {
-          method: "DELETE",
-        }).catch((err: unknown) => {
-          console.error("[ActionPanel] session DELETE failed sessionId=%s", sessionId, err)
-        })
-      }, 400)
-
+      // Session DELETE is handled by ActionPanel's unmount useEffect (backstop)
+      // This avoids double-DELETE when both explicit close and unmount fire.
       return null
     })
   }, [])
@@ -115,16 +107,8 @@ export function ChatMode({ className }: { className?: string }) {
 
       setActionPanelState((current) => {
         if (current) {
-          // Replace old panel — DELETE its session
-          const oldSessionId = current.sessionId
-          console.log("[ActionPanel] close reason=replace sessionId=%s", oldSessionId)
-          setTimeout(() => {
-            fetch(`/api/terminal/sessions?id=${encodeURIComponent(oldSessionId)}`, {
-              method: "DELETE",
-            }).catch((err: unknown) => {
-              console.error("[ActionPanel] session DELETE failed sessionId=%s", oldSessionId, err)
-            })
-          }, 400)
+          // Log the replace — unmount cleanup handles the DELETE for the old session
+          console.log("[ActionPanel] close reason=replace sessionId=%s", current.sessionId)
         }
 
         const newConfig: ActionPanelConfig = { ...actionDef, sessionId: newSessionId }
@@ -379,6 +363,7 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone, on
  *   - data-testid="action-panel" + data-session-id={config.sessionId}
  *   - data-testid="action-panel-close" — X button
  *   - console.log("[ActionPanel] completion signal received, closing in 1500ms sessionId=%s")
+ *   - console.log("[ActionPanel] unmount cleanup sessionId=%s") — backstop on unmount
  */
 function ActionPanel({
   config,
@@ -388,6 +373,22 @@ function ActionPanel({
   onClose: () => void
 }) {
   const accent = accentClasses(config.accentColor)
+
+  // Unmount backstop: DELETE the session if ActionPanel unmounts without closePanel being called
+  // (e.g., navigating away from Chat Mode while panel is open)
+  useEffect(() => {
+    const { sessionId } = config
+    return () => {
+      console.log("[ActionPanel] unmount cleanup sessionId=%s", sessionId)
+      fetch(`/api/terminal/sessions?id=${encodeURIComponent(sessionId)}`, {
+        method: "DELETE",
+      }).catch((err: unknown) => {
+        console.error("[ActionPanel] unmount session DELETE failed sessionId=%s", sessionId, err)
+      })
+    }
+  // config.sessionId is stable for a given panel instance; config object itself changes on replace
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.sessionId])
 
   // Subscribe to completion signal via ChatPane callback
   const handleCompletionSignal = useCallback(() => {
@@ -436,6 +437,7 @@ function ActionPanel({
       <ChatPane
         sessionId={config.sessionId}
         command="pi"
+        initialCommand={config.command}
         onCompletionSignal={handleCompletionSignal}
         className="flex-1 overflow-hidden"
       />
@@ -1286,6 +1288,11 @@ interface ChatPaneProps {
   sessionId: string
   command?: string
   className?: string
+  /**
+   * If provided, sent to the PTY exactly once after the SSE `connected` event.
+   * Uses a ref guard so SSE reconnects don't resend the command.
+   */
+  initialCommand?: string
   /** Called when PtyChatParser emits a CompletionSignal (GSD returned to idle). */
   onCompletionSignal?: () => void
 }
@@ -1303,11 +1310,13 @@ interface ChatPaneProps {
  *   - In dev mode: window.__chatParser exposes the parser for console inspection
  *   - ChatInputBar shows "Disconnected" badge when SSE is not connected
  */
-export function ChatPane({ sessionId, command, className, onCompletionSignal }: ChatPaneProps) {
+export function ChatPane({ sessionId, command, className, initialCommand, onCompletionSignal }: ChatPaneProps) {
   const parserRef = useRef<PtyChatParser | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const inputQueueRef = useRef<string[]>([])
   const flushingRef = useRef(false)
+  /** Ref guard: ensure `initialCommand` is sent exactly once, even across SSE reconnects. */
+  const hasSentInitialCommand = useRef(false)
 
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [connected, setConnected] = useState(false)
@@ -1379,6 +1388,12 @@ export function ChatPane({ sessionId, command, className, onCompletionSignal }: 
         if (msg.type === "connected") {
           setConnected(true)
           console.log("[ChatPane] SSE connected sessionId=%s", sessionId)
+          // Send initialCommand exactly once — ref guard prevents replay on SSE reconnect
+          if (initialCommand && !hasSentInitialCommand.current) {
+            hasSentInitialCommand.current = true
+            sendInput(initialCommand + "\n")
+            console.log("[ChatPane] initial command sent sessionId=%s command=%s", sessionId, initialCommand)
+          }
         } else if (msg.type === "output" && msg.data) {
           parser.feed(msg.data)
         }
@@ -1403,7 +1418,7 @@ export function ChatPane({ sessionId, command, className, onCompletionSignal }: 
         ;(window as any).__chatParser = undefined
       }
     }
-  }, [sessionId, command, onCompletionSignal])
+  }, [sessionId, command, initialCommand, onCompletionSignal, sendInput])
 
   // ── Render ────────────────────────────────────────────────────────────────
 

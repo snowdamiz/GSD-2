@@ -52,6 +52,24 @@ Wire the secondary PTY session creation on panel open, the initial command dispa
    - Confirm the secondary session is gone (check via browser DevTools Network tab — no more SSE stream for that session ID)
 7. Test edge case: close the panel manually mid-action — confirm session is still destroyed
 
+## Observability Impact
+
+**New signals from this task:**
+- `[ChatPane] initial command sent sessionId=%s command=%s` — fires once per panel open, after SSE `connected` event; absence means command was not dispatched
+- `[ActionPanel] completion signal received, closing in 1500ms sessionId=%s` — fires when GSD returns to idle inside the panel; used to verify auto-close was triggered
+- `[ActionPanel] unmount cleanup sessionId=%s` — fires when ActionPanel unmounts (catch-all backstop); signals a cleanup path other than `closePanel()` was used
+
+**Inspection surfaces:**
+- `document.querySelector('[data-testid="action-panel"]')?.dataset.sessionId` — live panel session ID
+- DevTools Network → filter by active `sessionId` → SSE stream disappears after panel closes (session deleted)
+- `window.__chatParser` (dev only) — parser instance for the main pane; secondary panel's parser not exposed (only one at a time)
+- `/api/terminal/sessions` GET — confirms session list before/after panel lifecycle
+
+**Failure visibility:**
+- If `initialCommand` is sent more than once: check console for duplicate `initial command sent` logs; source is missing/bad `hasSentInitialCommand` ref guard
+- If panel doesn't auto-close: no `completion signal received` log → parser not wired; or GSD never reached idle
+- If sessions accumulate: `[ActionPanel] session DELETE failed` + network error logs identify orphaned sessions
+
 ## Context
 
 - The `initialCommand` prop must send to the PTY exactly once. Using a ref `hasSentInitialCommand` (not state — no re-render needed) prevents the command from re-sending if the SSE reconnects.
