@@ -22,6 +22,9 @@ import {
   Loader2,
   Milestone,
   SkipForward,
+  Monitor,
+  Sun,
+  Moon,
 } from "lucide-react"
 import {
   Dialog,
@@ -33,6 +36,7 @@ import {
 } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { useTheme } from "next-themes"
 import {
   getCurrentScopeLabel,
   getLiveWorkspaceIndex,
@@ -70,6 +74,20 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
   const manager = useProjectStoreManager()
   const activeProjectCwd = useSyncExternalStore(manager.subscribe, manager.getSnapshot, manager.getSnapshot)
   const [exitDialogOpen, setExitDialogOpen] = useState(false)
+  const { theme, setTheme } = useTheme()
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => { setMounted(true) }, [])
+
+  const cycleTheme = () => {
+    if (theme === "system") setTheme("light")
+    else if (theme === "light") setTheme("dark")
+    else setTheme("system")
+  }
+
+  const themeIcon = !mounted ? Monitor : theme === "light" ? Sun : theme === "dark" ? Moon : Monitor
+  const themeLabel = !mounted ? "Theme" : theme === "light" ? "Light" : theme === "dark" ? "Dark" : "System"
+  const ThemeIcon = themeIcon
 
   const navItems = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -143,6 +161,20 @@ export function NavRail({ activeView, onViewChange, isConnecting = false }: NavR
           data-testid="sidebar-settings-button"
         >
           <Settings className="h-5 w-5" />
+        </button>
+        <button
+          className={cn(
+            "flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground transition-colors",
+            isConnecting
+              ? "cursor-not-allowed opacity-30"
+              : "hover:bg-accent/50 hover:text-foreground",
+          )}
+          title={`Theme: ${themeLabel}`}
+          disabled={isConnecting}
+          onClick={() => !isConnecting && cycleTheme()}
+          data-testid="sidebar-theme-toggle"
+        >
+          <ThemeIcon className="h-5 w-5" />
         </button>
         <button
           className={cn(
