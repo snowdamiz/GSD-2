@@ -54,7 +54,7 @@
   - Verify: verify primary button reflects workspace state (disabled when not ready, Stop when auto active); click a secondary phase button; verify `onOpenPanel` is called with correct config
   - Done when: toolbar renders state-aware buttons, workflow actions dispatch to PTY via sendCommand, New Milestone dialog opens correctly
 
-- [ ] **T02: ActionPanel component and layout split** `est:1.5h`
+- [x] **T02: ActionPanel component and layout split** `est:1.5h`
   - Why: The panel itself — with distinct styling, ChatPane inside, and X close button
   - Files: `web/components/gsd/chat-mode.tsx`
   - Do: (1) Define `ActionPanelConfig: { label: string; command: string; sessionId: string; accentColor: string }`. (2) Add `actionPanelState: ActionPanelConfig | null` to `ChatMode`. (3) Build `ActionPanel` with props `{ config: ActionPanelConfig; onClose: () => void }`: tinted top-border using `config.accentColor` (e.g., `border-t-2 border-sky-500`); action label as title in header; X close button calls `onClose()`; full-height `ChatPane` with `sessionId={config.sessionId}` + `command="pi"` + `onCompletionSignal={() => scheduleClose()}` (1500ms timeout). (4) `scheduleClose`: `setTimeout(() => onClose(), 1500)`. (5) Layout: when `actionPanelState !== null`, split the main content area with flexbox — main `ChatPane` at 60% width, `ActionPanel` at 40%. Add a subtle vertical divider. (6) Wrap with `AnimatePresence`; animate: `initial={{ x: "100%", opacity: 0 }}`, `animate={{ x: 0, opacity: 1 }}`, `exit={{ x: "100%", opacity: 0 }}`, `transition={{ type: "spring", stiffness: 300, damping: 30 }}`.

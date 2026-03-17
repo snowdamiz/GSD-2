@@ -79,3 +79,27 @@ Build `ActionPanel` — a right-side chat pane that opens when an action button 
 - The auto-close delay (1.5s after CompletionSignal) is intentional — it lets the user see the completion message before the panel disappears. Instant close feels jarring.
 - Session cleanup on close is important. Each panel open creates a new PTY session. Without explicit DELETE, sessions accumulate over time.
 - "Only one panel at a time" keeps the layout simple. The replace behavior (close old, open new) means the user never has to manage multiple panels.
+
+## Observability Impact
+
+### Runtime signals introduced by this task
+
+- `[ActionPanel] open sessionId=%s command=%s` — logged when a panel is opened; confirms sessionId and command are correct
+- `[ActionPanel] close reason=%s sessionId=%s` — logged on every close (reason: "manual" | "completion" | "replace"); allows diagnosing whether close was user-driven or parser-driven
+- `[ActionPanel] completion signal received, closing in 1500ms sessionId=%s` — fires when `PtyChatParser.onCompletionSignal` triggers; signals that the GSD action completed
+- `[ActionPanel] session DELETE failed sessionId=%s` — fires if the DELETE request errors; allows identifying leaked sessions
+
+### Inspection surfaces
+
+- `data-testid="action-panel"` — panel mounted and visible; non-null means AnimatePresence rendered it
+- `data-testid="action-panel-close"` — X button; click to trigger manual close
+- `document.querySelector('[data-testid="action-panel"]')?.dataset.sessionId` — current panel sessionId
+- DevTools Network tab → filter by `SSE` or session ID → active streams reveal live PTY sessions; after close, the stream for that sessionId should disappear
+- `window.__chatParser` (dev only) — the main session parser; action panel parser is separate and not exposed (by design, each ChatPane owns its own parser)
+
+### Failure visibility
+
+- Panel doesn't open: check console for `[ActionPanel] open` log; if missing, `openPanel()` was not called — check button wiring in `ChatModeHeader`
+- Panel doesn't close after completion: check `[ActionPanel] completion signal` log; if missing, `PtyChatParser.onCompletionSignal` did not fire — GSD may still be running or debounce window not met
+- Session leak: check DevTools Network for lingering SSE streams after panel close; if `[ActionPanel] session DELETE failed` appears, the cleanup fetch errored
+- Animation broken: if panel appears without slide-in, confirm `AnimatePresence` is wrapping the conditional render and `motion.div` has `initial/animate/exit` props

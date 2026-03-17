@@ -1,7 +1,8 @@
 "use client"
 
 import { useEffect, useRef, useCallback, useState, KeyboardEvent } from "react"
-import { MessagesSquare, SendHorizonal, Check, Eye, EyeOff, Play, Loader2, Milestone } from "lucide-react"
+import { MessagesSquare, SendHorizonal, Check, Eye, EyeOff, Play, Loader2, Milestone, X, MessageCircle, MapPin } from "lucide-react"
+import { AnimatePresence, motion } from "motion/react"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { PtyChatParser, ChatMessage, TuiPrompt } from "@/lib/pty-chat-parser"
@@ -13,11 +14,57 @@ import {
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
 import { NewMilestoneDialog } from "@/components/gsd/new-milestone-dialog"
 
+/* ─── ActionPanel types ─── */
+
+/**
+ * Configuration for a secondary action panel.
+ * accentColor maps to Tailwind color names (e.g. "sky", "amber", "green").
+ */
+export interface ActionPanelConfig {
+  label: string
+  command: string
+  sessionId: string
+  accentColor: string
+}
+
+/** Actions available to trigger a panel — independent of workflow phase buttons from T01. */
+const PANEL_ACTIONS: Array<Omit<ActionPanelConfig, "sessionId">> = [
+  { label: "Discuss", command: "/gsd", accentColor: "sky" },
+  { label: "Plan", command: "/gsd", accentColor: "amber" },
+]
+
+/** Map accentColor name → Tailwind top-border + header bg classes */
+function accentClasses(color: string): { border: string; bg: string; text: string } {
+  const map: Record<string, { border: string; bg: string; text: string }> = {
+    sky: {
+      border: "border-sky-500",
+      bg: "bg-sky-500/10",
+      text: "text-sky-400",
+    },
+    amber: {
+      border: "border-amber-500",
+      bg: "bg-amber-500/10",
+      text: "text-amber-400",
+    },
+    green: {
+      border: "border-green-500",
+      bg: "bg-green-500/10",
+      text: "text-green-400",
+    },
+    purple: {
+      border: "border-purple-500",
+      bg: "bg-purple-500/10",
+      text: "text-purple-400",
+    },
+  }
+  return map[color] ?? map["sky"]
+}
+
 /**
  * ChatMode — main view for the Chat tab.
  *
  * T01: Header with live GSD workflow action bar (mirrors Power Mode toolbar).
- * T02 wires in the live ChatPane (SSE + PtyChatParser).
+ * T02: ActionPanel — right-side panel with secondary PTY session; slides in on action click.
  * T03 adds fully-styled ChatBubble rendering (markdown + syntax highlight)
  *     and the fully-wired ChatInputBar.
  *
@@ -25,17 +72,68 @@ import { NewMilestoneDialog } from "@/components/gsd/new-milestone-dialog"
  *   - This component mounts only when activeView === "chat" (no hidden pre-init).
  *   - sessionStorage key "gsd-active-view:<cwd>" equals "chat" when this view is active.
  *   - ChatPane logs SSE lifecycle to console under [ChatPane] prefix.
+ *   - ActionPanel logs open/close/cleanup under [ActionPanel] prefix.
  *   - In dev mode, window.__chatParser exposes the PtyChatParser instance.
  *   - Header toolbar: data-testid="chat-mode-action-bar" confirms toolbar rendered.
  *   - Primary button: data-testid="chat-primary-action" reflects current workflowAction label.
  *   - Secondary buttons: data-testid="chat-secondary-action-{command}".
+ *   - Action panel: data-testid="action-panel" — present when panel is open.
+ *   - Action panel close: data-testid="action-panel-close".
  */
 export function ChatMode({ className }: { className?: string }) {
   const [milestoneDialogOpen, setMilestoneDialogOpen] = useState(false)
+  const [actionPanelState, setActionPanelState] = useState<ActionPanelConfig | null>(null)
   const state = useGSDWorkspaceState()
   const { sendCommand } = useGSDWorkspaceActions()
 
   const bridge = state.boot?.bridge ?? null
+
+  // ── Panel lifecycle ────────────────────────────────────────────────────────
+
+  const closePanel = useCallback(() => {
+    setActionPanelState((current) => {
+      if (!current) return null
+      const { sessionId } = current
+      console.log("[ActionPanel] close reason=manual sessionId=%s", sessionId)
+
+      // Delay DELETE until exit animation completes (~400ms)
+      setTimeout(() => {
+        fetch(`/api/terminal/sessions?id=${encodeURIComponent(sessionId)}`, {
+          method: "DELETE",
+        }).catch((err: unknown) => {
+          console.error("[ActionPanel] session DELETE failed sessionId=%s", sessionId, err)
+        })
+      }, 400)
+
+      return null
+    })
+  }, [])
+
+  const openPanel = useCallback(
+    (actionDef: Omit<ActionPanelConfig, "sessionId">) => {
+      const newSessionId = "gsd-action-" + Date.now()
+
+      setActionPanelState((current) => {
+        if (current) {
+          // Replace old panel — DELETE its session
+          const oldSessionId = current.sessionId
+          console.log("[ActionPanel] close reason=replace sessionId=%s", oldSessionId)
+          setTimeout(() => {
+            fetch(`/api/terminal/sessions?id=${encodeURIComponent(oldSessionId)}`, {
+              method: "DELETE",
+            }).catch((err: unknown) => {
+              console.error("[ActionPanel] session DELETE failed sessionId=%s", oldSessionId, err)
+            })
+          }, 400)
+        }
+
+        const newConfig: ActionPanelConfig = { ...actionDef, sessionId: newSessionId }
+        console.log("[ActionPanel] open sessionId=%s command=%s", newSessionId, actionDef.command)
+        return newConfig
+      })
+    },
+    [],
+  )
 
   const handlePrimaryAction = useCallback(
     (command: string) => {
@@ -58,11 +156,51 @@ export function ChatMode({ className }: { className?: string }) {
         onPrimaryAction={handlePrimaryAction}
         onSecondaryAction={handleSecondaryAction}
         onNewMilestone={() => setMilestoneDialogOpen(true)}
+        onOpenPanel={openPanel}
       />
 
-      {/* ── Main pane ── */}
+      {/* ── Main pane + optional right panel ── */}
       <div className="flex flex-1 overflow-hidden">
-        <ChatPane sessionId="gsd-main" command="pi" className="flex-1" />
+        {/* Main ChatPane: shrinks to ~58% when action panel is open */}
+        <ChatPane
+          sessionId="gsd-main"
+          command="pi"
+          className={cn(
+            "min-w-0 transition-[width] duration-300",
+            actionPanelState ? "w-[58%]" : "flex-1",
+          )}
+        />
+
+        {/* Vertical divider — only visible when panel is open */}
+        <AnimatePresence>
+          {actionPanelState && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="w-px flex-shrink-0 bg-border"
+            />
+          )}
+        </AnimatePresence>
+
+        {/* Action panel — animated slide-in from right */}
+        <AnimatePresence>
+          {actionPanelState && (
+            <motion.div
+              key={actionPanelState.sessionId}
+              initial={{ x: "100%", opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: "100%", opacity: 0 }}
+              transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              className="w-[42%] flex-shrink-0 overflow-hidden"
+            >
+              <ActionPanel
+                config={actionPanelState}
+                onClose={closePanel}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <NewMilestoneDialog open={milestoneDialogOpen} onOpenChange={setMilestoneDialogOpen} />
@@ -76,6 +214,7 @@ interface ChatModeHeaderProps {
   onPrimaryAction: (command: string) => void
   onSecondaryAction: (command: string) => void
   onNewMilestone: () => void
+  onOpenPanel: (action: Omit<ActionPanelConfig, "sessionId">) => void
 }
 
 /**
@@ -84,12 +223,15 @@ interface ChatModeHeaderProps {
  * Mirrors the Power Mode toolbar (dual-terminal.tsx) but is prop-driven:
  * callers provide action handlers rather than inline logic.
  *
+ * Also renders a secondary row of "phase action" buttons that open ActionPanel.
+ *
  * Observability:
- *   - data-testid="chat-mode-action-bar" on the button row
+ *   - data-testid="chat-mode-action-bar" on the workflow button row
  *   - data-testid="chat-primary-action" on the primary button
  *   - data-testid="chat-secondary-action-{command}" on each secondary button
+ *   - data-testid="chat-panel-trigger-{label}" on each panel trigger button
  */
-function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone }: ChatModeHeaderProps) {
+function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone, onOpenPanel }: ChatModeHeaderProps) {
   const state = useGSDWorkspaceState()
 
   const boot = state.boot
@@ -126,69 +268,182 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction, onNewMilestone }: 
     return phase
   })()
 
+  // Show panel trigger buttons only when workspace is ready and auto is not running
+  const showPanelTriggers =
+    state.bootStatus === "ready" && workspace !== null && !(auto?.active && !auto?.paused)
+
   return (
-    <div className="flex h-11 flex-shrink-0 items-center justify-between border-b border-border bg-card px-4">
-      {/* Left: title + state badge */}
-      <div className="flex items-center gap-2">
-        <MessagesSquare className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium text-foreground">Chat Mode</span>
-        <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
-          {stateBadge}
-        </span>
+    <div className="flex flex-shrink-0 flex-col border-b border-border bg-card">
+      {/* Top row: title + workflow actions */}
+      <div className="flex h-11 items-center justify-between px-4">
+        {/* Left: title + state badge */}
+        <div className="flex items-center gap-2">
+          <MessagesSquare className="h-4 w-4 text-muted-foreground" />
+          <span className="text-sm font-medium text-foreground">Chat Mode</span>
+          <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+            {stateBadge}
+          </span>
+        </div>
+
+        {/* Right: workflow action bar */}
+        <div className="flex items-center gap-2" data-testid="chat-mode-action-bar">
+          {workflowAction.primary && (
+            <button
+              data-testid="chat-primary-action"
+              onClick={handlePrimary}
+              disabled={workflowAction.disabled}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                workflowAction.primary.variant === "destructive"
+                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  : "bg-primary text-primary-foreground hover:bg-primary/90",
+                workflowAction.disabled && "cursor-not-allowed opacity-50",
+              )}
+              title={workflowAction.disabledReason}
+            >
+              {state.commandInFlight ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : workflowAction.isNewMilestone ? (
+                <Milestone className="h-3 w-3" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              {workflowAction.primary.label}
+            </button>
+          )}
+          {workflowAction.secondaries.map((action) => (
+            <button
+              key={action.command}
+              data-testid={`chat-secondary-action-${action.command}`}
+              onClick={() => onSecondaryAction(action.command)}
+              disabled={workflowAction.disabled}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium transition-colors hover:bg-accent",
+                workflowAction.disabled && "cursor-not-allowed opacity-50",
+              )}
+              title={workflowAction.disabledReason}
+            >
+              {action.label}
+            </button>
+          ))}
+          {state.commandInFlight && (
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3 w-3 animate-spin" />
+            </span>
+          )}
+        </div>
       </div>
 
-      {/* Right: workflow action bar */}
-      <div className="flex items-center gap-2" data-testid="chat-mode-action-bar">
-        {workflowAction.primary && (
-          <button
-            data-testid="chat-primary-action"
-            onClick={handlePrimary}
-            disabled={workflowAction.disabled}
-            className={cn(
-              "inline-flex items-center gap-1.5 rounded-md px-3 py-1 text-xs font-medium transition-colors",
-              workflowAction.primary.variant === "destructive"
-                ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                : "bg-primary text-primary-foreground hover:bg-primary/90",
-              workflowAction.disabled && "cursor-not-allowed opacity-50",
-            )}
-            title={workflowAction.disabledReason}
-          >
-            {state.commandInFlight ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : workflowAction.isNewMilestone ? (
-              <Milestone className="h-3 w-3" />
-            ) : (
-              <Play className="h-3 w-3" />
-            )}
-            {workflowAction.primary.label}
-          </button>
-        )}
-        {workflowAction.secondaries.map((action) => (
-          <button
-            key={action.command}
-            data-testid={`chat-secondary-action-${action.command}`}
-            onClick={() => onSecondaryAction(action.command)}
-            disabled={workflowAction.disabled}
-            className={cn(
-              "inline-flex items-center gap-1 rounded-md border border-border bg-background px-2 py-1 text-xs font-medium transition-colors hover:bg-accent",
-              workflowAction.disabled && "cursor-not-allowed opacity-50",
-            )}
-            title={workflowAction.disabledReason}
-          >
-            {action.label}
-          </button>
-        ))}
-        {state.commandInFlight && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin" />
-          </span>
-        )}
-      </div>
+      {/* Bottom row: phase action buttons that open the right panel */}
+      {showPanelTriggers && (
+        <div className="flex items-center gap-1.5 border-t border-border/40 px-4 py-1.5">
+          {PANEL_ACTIONS.map((action) => {
+            const accent = accentClasses(action.accentColor)
+            const icon =
+              action.label === "Discuss" ? (
+                <MessageCircle className={cn("h-3 w-3", accent.text)} />
+              ) : action.label === "Plan" ? (
+                <MapPin className={cn("h-3 w-3", accent.text)} />
+              ) : null
+            return (
+              <button
+                key={action.label}
+                data-testid={`chat-panel-trigger-${action.label.toLowerCase()}`}
+                onClick={() => onOpenPanel(action)}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-background px-2.5 py-1 text-xs font-medium transition-colors hover:bg-accent",
+                  `hover:${accent.border}`,
+                )}
+                title={`Open ${action.label} panel`}
+              >
+                {icon}
+                <span>{action.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
 
-/* ─── Shiki singleton (same pattern as file-content-viewer.tsx) ─── */
+/* ─── ActionPanel ─── */
+
+/**
+ * ActionPanel — right-side secondary chat pane for a GSD action.
+ *
+ * Opened by ChatMode.openPanel(). Contains a ChatPane connected to a fresh
+ * PTY session. Auto-closes 1500ms after PtyChatParser emits CompletionSignal.
+ *
+ * Observability:
+ *   - data-testid="action-panel" + data-session-id={config.sessionId}
+ *   - data-testid="action-panel-close" — X button
+ *   - console.log("[ActionPanel] completion signal received, closing in 1500ms sessionId=%s")
+ */
+function ActionPanel({
+  config,
+  onClose,
+}: {
+  config: ActionPanelConfig
+  onClose: () => void
+}) {
+  const accent = accentClasses(config.accentColor)
+
+  // Subscribe to completion signal via ChatPane callback
+  const handleCompletionSignal = useCallback(() => {
+    console.log(
+      "[ActionPanel] completion signal received, closing in 1500ms sessionId=%s",
+      config.sessionId,
+    )
+    setTimeout(() => {
+      onClose()
+    }, 1500)
+  }, [config.sessionId, onClose])
+
+  return (
+    <div
+      data-testid="action-panel"
+      data-session-id={config.sessionId}
+      className="flex h-full flex-col overflow-hidden bg-background"
+    >
+      {/* Tinted header with accent top-border */}
+      <div
+        className={cn(
+          "flex h-11 flex-shrink-0 items-center justify-between border-b border-border px-4",
+          `border-t-2 ${accent.border}`,
+          accent.bg,
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <span className={cn("text-xs font-semibold uppercase tracking-wide", accent.text)}>
+            {config.label}
+          </span>
+          <span className="rounded-full border border-border/40 bg-background/40 px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground uppercase tracking-wide">
+            action
+          </span>
+        </div>
+        <button
+          data-testid="action-panel-close"
+          onClick={onClose}
+          aria-label="Close action panel"
+          className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-background/60 hover:text-foreground"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Secondary ChatPane connected to fresh session */}
+      <ChatPane
+        sessionId={config.sessionId}
+        command="pi"
+        onCompletionSignal={handleCompletionSignal}
+        className="flex-1 overflow-hidden"
+      />
+    </div>
+  )
+}
+
+
 
 type ShikiHighlighter = {
   codeToHtml: (code: string, options: { lang: string; theme: string }) => string
@@ -1031,6 +1286,8 @@ interface ChatPaneProps {
   sessionId: string
   command?: string
   className?: string
+  /** Called when PtyChatParser emits a CompletionSignal (GSD returned to idle). */
+  onCompletionSignal?: () => void
 }
 
 /**
@@ -1046,7 +1303,7 @@ interface ChatPaneProps {
  *   - In dev mode: window.__chatParser exposes the parser for console inspection
  *   - ChatInputBar shows "Disconnected" badge when SSE is not connected
  */
-export function ChatPane({ sessionId, command, className }: ChatPaneProps) {
+export function ChatPane({ sessionId, command, className, onCompletionSignal }: ChatPaneProps) {
   const parserRef = useRef<PtyChatParser | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const inputQueueRef = useRef<string[]>([])
@@ -1101,6 +1358,14 @@ export function ChatPane({ sessionId, command, className }: ChatPaneProps) {
       console.debug("[ChatPane] messages=%d sessionId=%s", msgs.length, sessionId)
     })
 
+    // Wire completion signal — used by ActionPanel for auto-close
+    let unsubscribeCompletion: (() => void) | undefined
+    if (onCompletionSignal) {
+      unsubscribeCompletion = parser.onCompletionSignal(() => {
+        onCompletionSignal()
+      })
+    }
+
     const streamUrl = new URL("/api/terminal/stream", window.location.origin)
     streamUrl.searchParams.set("id", sessionId)
     if (command) streamUrl.searchParams.set("command", command)
@@ -1131,13 +1396,14 @@ export function ChatPane({ sessionId, command, className }: ChatPaneProps) {
       es.close()
       eventSourceRef.current = null
       unsubscribe()
+      unsubscribeCompletion?.()
       parserRef.current = null
       if (process.env.NODE_ENV !== "production") {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         ;(window as any).__chatParser = undefined
       }
     }
-  }, [sessionId, command])
+  }, [sessionId, command, onCompletionSignal])
 
   // ── Render ────────────────────────────────────────────────────────────────
 
