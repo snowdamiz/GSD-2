@@ -4,67 +4,66 @@
 
 ## Success Criteria
 
-- New "Chat" nav entry appears below Power Mode in the sidebar
-- Main GSD session renders as a chat conversation (user messages + AI responses as styled bubbles)
-- AI response markdown (headers, bold, lists, code blocks) renders correctly in chat bubbles
-- TUI select prompts (arrow-key lists) render as clickable native UI options; selection sends correct keystroke to PTY
-- TUI text/password inputs render as native input fields; submission sends text + Enter to PTY
-- Action toolbar buttons (Auto, Stop, Discuss, Plan, Step, New Milestone) are present and state-aware
-- Clicking an action button opens a right-panel chat instance, distinctly styled
-- Right panel auto-closes when the GSD action completes
-- No orphaned PTY sessions after panel close
+- New "Chat" nav entry appears below Power Mode in the sidebar and is reachable by click
+- Main GSD session renders as a live chat conversation with user messages and AI responses as styled bubbles
+- AI response markdown (headers, bold, lists, code blocks, tables) renders correctly in assistant bubbles
+- TUI select prompts render as clickable native option lists; selecting sends correct arrow + Enter keystrokes to PTY and GSD advances
+- TUI text and password inputs render as native input fields; submitting sends text + Enter to PTY and GSD advances
+- Action toolbar buttons reflect live workspace state (disabled when appropriate)
+- Clicking an action button opens a right-panel chat with distinct visual treatment
+- Right panel auto-closes approximately 1.5s after GSD action completes
+- No orphaned PTY sessions after panel close/navigation away
 
 ## Key Risks / Unknowns
 
-- PTY output parsing — GSD output arrives as raw ANSI bytes; segmenting into coherent chat messages requires heuristics — the hardest technical problem in this milestone
-- TUI prompt detection — ink/TUI prompt patterns must be reliably identified before the escape sequences corrupt the display
-- Action completion detection — "done" signal must come from PTY output, not a discrete API
+- PTY output parsing — GSD output arrives as raw ANSI bytes with cursor moves, overwrites, and ink rendering; segmenting into coherent chat messages requires heuristics that must be validated against real GSD output
+- TUI prompt detection — ink select/text/password prompt patterns must be reliably identified from stripped output; misdetection corrupts the session
 
 ## Proof Strategy
 
-- PTY parsing risk → retire in S01 by building the parser against live PTY output and verifying message boundaries are clean
-- TUI prompt risk → retire in S03 by confirming select + text/password prompts send correct bytes to PTY and the PTY responds correctly
-- Action completion risk → retire in S04 by confirming the right panel auto-closes after a real /gsd action completes
+- PTY parsing risk → retire in S01 by shipping a real parser that feeds from the live SSE stream and produces clean ChatMessage[] visible in the running chat view
+- TUI prompt risk → retire in S03 by verifying that select and password prompts send correct keystrokes and GSD visibly advances in its session
 
 ## Verification Classes
 
-- Contract verification: TypeScript types clean, React components render without errors, parser unit-testable with fixture strings
-- Integration verification: Live PTY session renders as chat, TUI prompts intercepted, panel lifecycle clean
-- Operational verification: No session leaks across panel open/close cycles
-- UAT / human verification: Visual inspection — chat bubbles look correct, panel animations feel right
+- Contract verification: TypeScript compiles clean (`npm run build:web-host`), parser exports all required types
+- Integration verification: Live PTY session renders as chat in browser, TUI prompts intercepted and forwarded correctly, panel lifecycle clean across open/close cycles
+- Operational verification: No session leaks; panel auto-close triggers after real GSD action completion
+- UAT / human verification: Visual inspection — chat bubbles readable, markdown rendered, panel animations smooth
 
 ## Milestone Definition of Done
 
 This milestone is complete only when all are true:
 
-- Chat Mode view is reachable from the sidebar nav
+- Chat Mode view is reachable from the sidebar nav (below Power Mode)
 - Main pane renders live GSD output as chat bubbles with styled markdown
 - TUI select and text/password prompts render as native UI and correctly forward input to PTY
 - Action buttons reflect live workspace state (disabled when appropriate)
-- Right panel opens on button click and auto-closes on action completion
+- Right panel opens on action button click and auto-closes on GSD action completion
+- `npm run build:web-host` exits 0 with no new TypeScript errors
 - No regressions in Power Mode, Dashboard, or other existing views
 - No orphaned PTY sessions after panel lifecycle
 
 ## Requirement Coverage
 
-- Covers: Consumer UX layer over existing PTY/bridge infrastructure
-- Partially covers: R001-R004 (adds an alternative interaction surface)
-- Leaves for later: None — self-contained new view
-- Orphan risks: None
+- Covers: R113 (consumer-grade chat interface over PTY sessions)
+- Partially covers: R001–R004 (additive UX layer over existing bridge infrastructure)
+- Leaves for later: none — self-contained new view
+- Orphan risks: none
 
 ## Slices
 
 - [ ] **S01: PTY output parser and chat message model** `risk:high` `depends:[]`
-  > After this: A standalone TypeScript module `pty-chat-parser.ts` accepts raw PTY byte chunks and emits structured `ChatMessage[]` with type (user/assistant/system), text content (ANSI stripped), and detected TUI prompt objects — verified with fixture strings.
+  > After this: `web/lib/pty-chat-parser.ts` ships with `PtyChatParser`, `ChatMessage`, `TuiPrompt`, and `CompletionSignal` — the parser connects to a live GSD SSE stream, ANSI-strips output, segments it into role-classified messages, detects ink TUI prompts, and emits completion signals. Verified by feeding live SSE output and inspecting the resulting message array.
 
 - [ ] **S02: Chat Mode view — main pane** `risk:medium` `depends:[S01]`
-  > After this: "Chat" appears in the sidebar nav below Power Mode. Clicking it shows the main GSD session rendered as a live chat conversation — scrolling bubbles, assistant responses with styled markdown, user inputs reflected as outgoing bubbles.
+  > After this: "Chat" appears in the sidebar nav below Power Mode. Clicking it shows the live main GSD session rendered as a chat conversation — scrolling bubbles, assistant responses with styled markdown, user inputs as outgoing bubbles, text input bar at the bottom.
 
 - [ ] **S03: TUI prompt intercept UI** `risk:medium` `depends:[S02]`
-  > After this: When GSD presents an arrow-key select list or a text/password input prompt, the chat view renders native UI components (radio-list, text field, masked field) instead of raw escape sequences. Submitting the native UI sends the correct keystrokes to the PTY and the PTY advances normally.
+  > After this: When GSD presents an arrow-key select list or a text/password input prompt, the chat view renders native UI components instead of raw escape sequences. Submitting via the native UI sends correct keystrokes to the PTY and GSD visibly advances.
 
 - [ ] **S04: Action toolbar and right panel lifecycle** `risk:low` `depends:[S02,S03]`
-  > After this: The Chat Mode header has a toolbar with workflow action buttons (Auto, Stop, Discuss, Plan, Step, New Milestone) that mirror Power Mode's action bar logic. Clicking any button spawns a right-panel chat instance with a distinct visual treatment. The panel auto-closes when GSD signals action completion. Panel open/close animates smoothly.
+  > After this: Chat Mode header has state-aware workflow buttons. Clicking an action button spawns a right-panel chat with distinct styling. The panel auto-closes ~1.5s after GSD signals completion. Panel open/close animates with the motion library. No session leaks.
 
 ## Boundary Map
 
@@ -72,54 +71,54 @@ This milestone is complete only when all are true:
 
 Produces:
 - `web/lib/pty-chat-parser.ts` — stateful `PtyChatParser` class
-  - `feed(chunk: string): void` — accepts raw PTY bytes
-  - `getMessages(): ChatMessage[]` — returns current message array
-  - `onMessage(cb: (msg: ChatMessage) => void): () => void` — subscribe to new/updated messages
-  - `ChatMessage` type: `{ id: string; role: 'user' | 'assistant' | 'system'; content: string; prompt?: TuiPrompt; timestamp: number; complete: boolean }`
-  - `TuiPrompt` type: `{ kind: 'select' | 'text' | 'password'; label: string; options?: string[]; selectedIndex?: number }`
-  - `CompletionSignal` type: emitted when parser detects a GSD action-complete pattern
+  - `feed(chunk: string): void` — accepts raw PTY bytes (ANSI included)
+  - `getMessages(): ChatMessage[]` — returns current message array (ANSI stripped)
+  - `onMessage(cb: (msg: ChatMessage) => void): () => void` — subscribe; returns unsubscribe
+  - `onCompletionSignal(cb: (sig: CompletionSignal) => void): () => void` — subscribe to action-complete events
+  - `ChatMessage`: `{ id: string; role: 'user' | 'assistant' | 'system'; content: string; prompt?: TuiPrompt; timestamp: number; complete: boolean }`
+  - `TuiPrompt`: `{ kind: 'select' | 'text' | 'password'; label: string; options?: string[]; selectedIndex?: number }`
+  - `CompletionSignal`: `{ source: string; timestamp: number }`
 
 Consumes:
-- nothing (leaf node — reads raw PTY SSE output as input)
+- nothing (leaf node — reads raw PTY SSE output as string input)
 
 ### S02 → S03, S04
 
 Produces:
-- `web/components/gsd/chat-mode.tsx` — main `ChatMode` component
-  - `ChatPane` sub-component: connects to a PTY session via SSE, feeds output to `PtyChatParser`, renders `ChatMessage[]` as bubbles
-  - `ChatBubble` sub-component: renders `ChatMessage` as styled bubble; assistant bubbles use react-markdown
-  - `sessionId` prop interface for connecting to a specific PTY session
-  - `onPromptResponse(data: string): void` callback interface for TUI intercept
+- `web/components/gsd/chat-mode.tsx` — `ChatMode`, `ChatPane`, `ChatBubble`, `ChatMessageList`, `ChatInputBar` components
+  - `ChatPane` props: `{ sessionId: string; command?: string; initialCommand?: string; onCompletionSignal?: () => void; className?: string }`
+  - `ChatPane` exposes `sendInput(data: string)` which POSTs to `/api/terminal/input`
+  - `ChatBubble` renders `ChatMessage` — assistant with react-markdown, user as plain outgoing, system as muted inline
+- Sidebar nav entry: `{ id: "chat", label: "Chat", icon: MessagesSquare }` after `power`
+- app-shell: `"chat"` in KNOWN_VIEWS, ChatMode mounted when `activeView === "chat"`
 
 Consumes from S01:
-- `PtyChatParser` — `feed()`, `getMessages()`, `onMessage()`
-- `ChatMessage`, `TuiPrompt` types
+- `PtyChatParser`, `ChatMessage`, `TuiPrompt`
 
 ### S03 → S04
 
 Produces:
-- `TuiSelectPrompt` component: renders select list as clickable radio-style options, sends arrow + Enter keystrokes to PTY
-- `TuiTextPrompt` component: renders text input field, sends text + Enter to PTY
-- `TuiPasswordPrompt` component: renders masked password field, sends text + Enter to PTY
-- All mounted inside `ChatPane` when `ChatMessage.prompt` is present
+- `TuiSelectPrompt`: renders options as clickable list; sends `\x1b[A`/`\x1b[B` delta + `\r` to PTY on selection
+- `TuiTextPrompt`: labeled text input; sends text + `\r` to PTY on submit
+- `TuiPasswordPrompt`: masked input; sends text + `\r` to PTY on submit; value never displayed
+- All wired into `ChatBubble` dispatch on `message.prompt?.kind`
 
 Consumes from S02:
-- `ChatPane` prompt rendering slot
-- `onPromptResponse` callback
+- `ChatPane` prompt rendering slot, `onSubmit` callback chain
 
 ### S04 → (milestone complete)
 
 Produces:
-- `ChatModeHeader` component with action toolbar
-- Right panel lifecycle: `ActionPanel` component wrapping a `ChatPane` for a secondary session
-- Panel state: open/closed, sessionId, triggered command
-- Auto-close logic triggered by `CompletionSignal` from S01 parser
+- `ChatModeHeader` with workflow action toolbar (mirrors Power Mode action bar via `deriveWorkflowAction`)
+- `ActionPanelConfig`: `{ label: string; command: string; sessionId: string; accentColor: string }`
+- `ActionPanel`: wraps `ChatPane` for a secondary PTY session; distinct header with accentColor; X close button; auto-close on `CompletionSignal` + 1500ms delay
+- Panel lifecycle in `ChatMode`: `actionPanelState: ActionPanelConfig | null`; `openPanel()` generates fresh sessionId; `closePanel()` DELETEs session
 
 Consumes from S02:
-- `ChatPane` — used for both main and action panel instances
+- `ChatPane` (used for both main pane and action panel)
 
 Consumes from S03:
-- TUI prompt components — used inside action panel's `ChatPane`
+- TUI prompt components (active inside action panel's `ChatPane`)
 
 Consumes from S01:
-- `CompletionSignal` — triggers panel auto-close
+- `CompletionSignal` (triggers panel auto-close)
