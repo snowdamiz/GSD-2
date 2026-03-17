@@ -1,7 +1,7 @@
 # GSD State
 
 **Active Milestone:** M003: Upstream Sync and Full Web Feature Parity
-**Active Slice:** S02: Browser slash-command dispatch for all upstream commands
+**Active Slice:** S03: Workflow visualizer page
 **Phase:** executing
 **Requirements Status:** 12 active · 12 validated · 3 deferred · 3 out of scope
 
@@ -12,10 +12,11 @@
 - ⬜ **M004:** M004
 
 ## Recent Decisions
-- D051: Route /gsd subcommands via dispatchGSDSubcommand() — 20 surfaces (gsd- prefix), 9 passthrough, 1 help
+- D052: Client-side blob downloads for visualizer Export tab
+- D053: "view-navigate" dispatch kind for /gsd visualize navigation
 
 ## Blockers
 - None
 
 ## Next Action
-Execute T01 of S02 (Add GSD subcommand dispatch function with surface union expansion).
+Execute S03/T01 (Create visualizer API route, service layer, and browser types).
