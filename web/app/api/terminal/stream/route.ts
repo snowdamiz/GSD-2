@@ -20,11 +20,12 @@ const encoder = new TextEncoder();
 export async function GET(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const sessionId = url.searchParams.get("id") || "default";
+  const command = url.searchParams.get("command") || undefined;
   const projectCwd = resolveProjectCwd(request);
 
   // Ensure the session exists
   try {
-    getOrCreateSession(sessionId, projectCwd);
+    getOrCreateSession(sessionId, projectCwd, command);
   } catch (error) {
     console.error("[pty-stream] Failed to create session:", error);
     return Response.json(

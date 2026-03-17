@@ -30,7 +30,14 @@ export async function GET(): Promise<Response> {
 export async function POST(request: Request): Promise<Response> {
   const projectCwd = resolveProjectCwd(request);
   const id = `term-${getNextIndex()}`;
-  getOrCreateSession(id, projectCwd);
+  let command: string | undefined;
+  try {
+    const body = await request.json() as { command?: string };
+    command = body.command;
+  } catch {
+    // No body or invalid JSON — use default shell
+  }
+  getOrCreateSession(id, projectCwd, command);
   return Response.json({ id });
 }
 

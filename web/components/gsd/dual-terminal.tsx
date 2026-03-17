@@ -266,7 +266,7 @@ export function DualTerminal() {
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span>Left: Auto Mode</span>
           <span className="text-border">|</span>
-          <span>Right: Live Terminal</span>
+          <span>Right: Interactive GSD</span>
         </div>
       </div>
 
@@ -285,9 +285,9 @@ export function DualTerminal() {
           <GripVertical className="h-4 w-4 text-muted-foreground" />
         </div>
 
-        {/* Right terminal - Live S03 Terminal */}
+        {/* Right terminal - Interactive GSD instance */}
         <div style={{ width: `${100 - splitPosition}%` }} className="h-full overflow-hidden">
-          <ShellTerminal className="h-full" />
+          <ShellTerminal className="h-full" command="pi" />
         </div>
       </div>
 

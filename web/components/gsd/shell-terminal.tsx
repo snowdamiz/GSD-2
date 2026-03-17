@@ -18,6 +18,7 @@ interface TerminalTab {
 
 interface ShellTerminalProps {
   className?: string
+  command?: string
 }
 
 // ─── xterm theme ──────────────────────────────────────────────────────────────
@@ -66,12 +67,14 @@ const XTERM_OPTIONS = {
 interface TerminalInstanceProps {
   sessionId: string
   visible: boolean
+  command?: string
   onConnectionChange: (connected: boolean) => void
 }
 
 function TerminalInstance({
   sessionId,
   visible,
+  command,
   onConnectionChange,
 }: TerminalInstanceProps) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -180,9 +183,10 @@ function TerminalInstance({
       terminal.onBinary((data) => sendInput(data))
 
       // SSE stream
-      const es = new EventSource(
-        `/api/terminal/stream?id=${encodeURIComponent(sessionId)}`,
-      )
+      const streamUrl = new URL(`/api/terminal/stream`, window.location.origin)
+      streamUrl.searchParams.set("id", sessionId)
+      if (command) streamUrl.searchParams.set("command", command)
+      const es = new EventSource(streamUrl.toString())
       eventSourceRef.current = es
 
       es.onmessage = (event) => {
@@ -229,7 +233,7 @@ function TerminalInstance({
       termRef.current = null
       fitAddonRef.current = null
     }
-  }, [sessionId, sendInput, sendResize])
+  }, [sessionId, command, sendInput, sendResize])
 
   // Focus on click
   const handleClick = useCallback(() => {
@@ -261,20 +265,24 @@ function TerminalInstance({
 
 // ─── Multi-instance terminal panel ────────────────────────────────────────────
 
-export function ShellTerminal({ className }: ShellTerminalProps) {
+export function ShellTerminal({ className, command }: ShellTerminalProps) {
   const [tabs, setTabs] = useState<TerminalTab[]>([
-    { id: "default", label: "zsh", connected: false },
+    { id: "default", label: command ? "pi" : "zsh", connected: false },
   ])
   const [activeTabId, setActiveTabId] = useState("default")
 
   const createTab = useCallback(async () => {
     try {
-      const res = await fetch("/api/terminal/sessions", { method: "POST" })
+      const res = await fetch("/api/terminal/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(command ? { command } : {}),
+      })
       const data = (await res.json()) as { id: string }
       const index = tabs.length + 1
       const newTab: TerminalTab = {
         id: data.id,
-        label: `zsh`,
+        label: command ? "pi" : "zsh",
         connected: false,
       }
       setTabs((prev) => [...prev, newTab])
@@ -282,7 +290,7 @@ export function ShellTerminal({ className }: ShellTerminalProps) {
     } catch {
       /* network error */
     }
-  }, [tabs.length])
+  }, [tabs.length, command])
 
   const closeTab = useCallback(
     (id: string) => {
@@ -320,6 +328,7 @@ export function ShellTerminal({ className }: ShellTerminalProps) {
             key={tab.id}
             sessionId={tab.id}
             visible={tab.id === activeTabId}
+            command={command}
             onConnectionChange={(c) => updateConnection(tab.id, c)}
           />
         ))}

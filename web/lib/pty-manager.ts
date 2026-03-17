@@ -146,7 +146,7 @@ function loadNodePty(): LoadedNodePty {
   );
 }
 
-export function getOrCreateSession(sessionId: string, projectCwd?: string): PtySession {
+export function getOrCreateSession(sessionId: string, projectCwd?: string, command?: string): PtySession {
   ensureProcessCleanupHandlers();
   const map = getSessions();
   const existing = map.get(sessionId);
@@ -178,7 +178,7 @@ export function getOrCreateSession(sessionId: string, projectCwd?: string): PtyS
     console.warn("[pty] Could not check spawn-helper:", e);
   }
 
-  const shell = getDefaultShell();
+  const shell = command || getDefaultShell();
   const cwd = projectCwd || getProjectCwd();
   console.log("[pty] Spawning shell:", shell, "cwd:", cwd, "node-pty:", nodePtyRoot);
 
