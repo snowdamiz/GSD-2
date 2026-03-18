@@ -101,6 +101,12 @@ export interface SettingsPreferencesData {
   }
   uatDispatch?: boolean
   autoVisualize?: boolean
+  remoteQuestions?: {
+    channel?: "slack" | "discord" | "telegram"
+    channelId?: string
+    timeoutMinutes?: number
+    pollIntervalSeconds?: number
+  }
   scope: "global" | "project"
   path: string
   warnings?: string[]

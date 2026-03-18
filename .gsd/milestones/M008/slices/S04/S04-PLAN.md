@@ -27,6 +27,8 @@
 - Save config → verify `remote_questions` block in `~/.gsd/preferences.md`
 - Disconnect → verify block removed
 - Refresh → confirm panel reflects current state
+- `GET /api/remote-questions` returns structured JSON with `status` and `error` fields for both success and failure paths
+- `POST /api/remote-questions` with invalid channel ID returns 400 with descriptive `{ error }` message
 
 ## Observability / Diagnostics
 
@@ -43,7 +45,7 @@
 
 ## Tasks
 
-- [ ] **T01: Add remote questions types, child script field, and API route** `est:45m`
+- [x] **T01: Add remote questions types, child script field, and API route** `est:45m`
   - Why: Establishes the data contract and read/write API that the UI panel consumes. The type extension unblocks the read path via existing `loadSettingsData()`. The API route provides GET (current config + env var status), POST (save config), and DELETE (remove config) — all doing direct YAML frontmatter manipulation on `~/.gsd/preferences.md`.
   - Files: `web/lib/settings-types.ts`, `src/web/settings-service.ts`, `web/app/api/remote-questions/route.ts`
   - Do: (1) Add `remoteQuestions` optional field to `SettingsPreferencesData` in `settings-types.ts` with shape `{ channel?: "slack" | "discord" | "telegram"; channelId?: string; timeoutMinutes?: number; pollIntervalSeconds?: number }`. (2) In `settings-service.ts` child script, add `remoteQuestions` field that maps from `p.remote_questions` — map `channel_id` → `channelId`, `timeout_minutes` → `timeoutMinutes`, `poll_interval_seconds` → `pollIntervalSeconds`, stringify `channel_id` since it can be string|number. (3) Create `/api/remote-questions/route.ts` with GET/POST/DELETE. GET reads `~/.gsd/preferences.md` YAML frontmatter, extracts `remote_questions`, checks if the required env var is set. POST validates inputs (channel must be slack/discord/telegram, channel_id must match pattern, timeout clamped 1-30, poll clamped 2-30) and writes back. DELETE removes the `remote_questions` block. Use `homedir()` + `.gsd/preferences.md` for path. Use regex-based YAML frontmatter parsing matching the pattern in `parsePreferencesMarkdown()` from preferences.ts. Replicate `CHANNEL_ID_PATTERNS` constants directly in the route (cannot import from extension modules due to Turbopack constraint). Include `ENV_KEYS` map for env var status check.

@@ -69,6 +69,13 @@ The API route cannot import from extension modules (`src/resources/extensions/`)
 - Manually test API route: `curl http://localhost:3000/api/remote-questions` returns valid JSON
 - Types are consistent between `SettingsPreferencesData` and the child script output
 
+## Observability Impact
+
+- **New signal:** `GET /api/remote-questions` returns `{ config, envVarSet, envVarName, status }` — agents/users can inspect current remote questions state and env var availability without reading raw YAML.
+- **Inspection:** `curl /api/remote-questions` at any time shows whether config exists and whether the bot token env var is set.
+- **Failure visibility:** POST with invalid data returns 400 with `{ error: "<descriptive message>" }`. File-system errors return 500 with `{ error }`. GET with no config returns `{ config: null, status: "not_configured" }`.
+- **Redaction:** env var values are never exposed — only `envVarSet: boolean`.
+
 ## Inputs
 
 - `web/lib/settings-types.ts` — existing `SettingsPreferencesData` interface to extend
