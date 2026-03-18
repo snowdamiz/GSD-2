@@ -292,6 +292,83 @@ This file is the explicit capability and coverage contract for the project.
 - Validation: All four M007 slices delivered their components: S01 (PtyChatParser + CompletionSignal), S02 (Chat Mode view, ChatPane, ChatBubble, sidebar nav), S03 (TUI prompt intercept UI — select/text/password), S04 (ChatModeHeader toolbar, ActionPanel with animated lifecycle, session DELETE cleanup). npm run build:web-host exits 0. Browser end-to-end verified: panel slides in with accent color, secondary PTY session established, X close fires DELETE, main session unaffected. Completion auto-close (1500ms after CompletionSignal) wired; live runtime UAT required to fully exercise.
 - Notes: Additive — does not modify Power Mode or existing views. All four slices complete as of 2026-03-17.
 
+### R114 — Dark mode is the default theme when no user preference is stored.
+- Class: quality-attribute
+- Status: active
+- Description: Opening the GSD web workspace with no stored theme preference defaults to dark mode instead of system preference.
+- Why it matters: Dark mode is the primary development environment; system preference detection often picks light mode on macOS, which is not the intended default experience.
+- Source: user
+- Primary owning slice: M008/S03
+- Supporting slices: none
+- Validation: unmapped
+- Notes: One-line change in ThemeProvider defaultTheme prop plus layout.tsx.
+
+### R115 — Light mode non-monochrome colors are consistent via design tokens.
+- Class: quality-attribute
+- Status: active
+- Description: Every non-monochrome color in light mode (success, warning, error, info states) uses the semantic CSS custom property tokens (`--success`, `--warning`, `--destructive`, `--info`) instead of raw Tailwind color classes. The same green, amber, red, and blue are used everywhere for the same semantic meaning.
+- Why it matters: Post-M005 development (M006, M007) introduced raw Tailwind accent colors (`emerald-400`, `amber-400`, `red-400`, `sky-400`) in ~15+ components, creating visual inconsistency in light mode.
+- Source: user
+- Primary owning slice: M008/S03
+- Supporting slices: none
+- Validation: unmapped
+- Notes: Verified by `rg "emerald-|amber-|red-[0-9]|sky-|orange-|green-|blue-" web/components/` returning zero hits for semantic state colors.
+
+### R116 — Dashboard progress bar dynamically colors red→green by completion percentage.
+- Class: quality-attribute
+- Status: active
+- Description: The current slice progress bar on the main dashboard transitions from red (0%) through yellow (50%) to green (100%) based on task completion percentage, instead of using a static monochrome color.
+- Why it matters: Visual progress feedback through color is more intuitive than percentage text alone.
+- Source: user
+- Primary owning slice: M008/S05
+- Supporting slices: none
+- Validation: unmapped
+- Notes: Currently uses `bg-foreground` (monochrome). Needs oklch color interpolation.
+
+### R117 — Browser update banner with in-app update trigger.
+- Class: core-capability
+- Status: active
+- Description: When a newer GSD version is available on npm, a banner appears in the browser workspace. The user can trigger the update from the browser, which runs npm install asynchronously with progress feedback.
+- Why it matters: Users running `gsd --web` have no visibility into available updates and must fall back to the CLI to update.
+- Source: user
+- Primary owning slice: M008/S02
+- Supporting slices: none
+- Validation: unmapped
+- Notes: Reuses existing `src/update-check.ts` infrastructure for version detection. Needs new async API route for the update trigger.
+
+### R118 — Slack/Discord/Telegram remote question config in web settings.
+- Class: core-capability
+- Status: active
+- Description: The web settings panel exposes configuration for Slack, Discord, and Telegram remote question channels — channel type, channel ID, timeout, and poll interval — reading and writing the same `remote_questions` preferences.md format the TUI uses.
+- Why it matters: Remote question configuration exists in the TUI preferences system but has no web settings surface, so browser-only users cannot configure it.
+- Source: user
+- Primary owning slice: M008/S04
+- Supporting slices: none
+- Validation: unmapped
+- Notes: `RemoteQuestionsConfig` type already exists in `src/resources/extensions/gsd/preferences.ts`.
+
+### R119 — Projects view is a styled list with expandable progress details.
+- Class: quality-attribute
+- Status: active
+- Description: The projects page is redesigned from a grid layout to a styled list. Clicking/selecting a project expands it to show progress details including current milestone, active slice, task progress, and cost.
+- Why it matters: The current grid layout shows minimal information per project; an expandable list provides richer context without requiring a full project switch.
+- Source: user
+- Primary owning slice: M008/S01
+- Supporting slices: none
+- Validation: unmapped
+- Notes: Progress detail for non-active projects may use lightweight filesystem reads (STATE.md) rather than requiring a running bridge.
+
+### R120 — Terminal text size adjustable in settings (chat + expert split, not footer).
+- Class: quality-attribute
+- Status: active
+- Description: A new setting in the web settings panel allows users to adjust terminal text size. The setting applies to chat mode terminals and the expert mode split terminal page, but not the persistent footer terminal at the bottom of most pages.
+- Why it matters: Terminal text size is currently hardcoded to 13px with no user control — an accessibility and comfort gap.
+- Source: user
+- Primary owning slice: M008/S05
+- Supporting slices: none
+- Validation: unmapped
+- Notes: Currently hardcoded `fontSize: 13` in shell-terminal.tsx and `text-sm` in terminal.tsx.
+
 ## Deferred
 
 ### R021 — Add deeper analytics/history views beyond the live dashboard and activity surfaces required for the core web workflow.
@@ -386,10 +463,17 @@ This file is the explicit capability and coverage contract for the project.
 | R111 | quality-attribute | active | M004/S01 | M004/S02 | unmapped |
 | R112 | quality-attribute | active | M004/S03 | none | unmapped |
 | R113 | primary-user-loop | validated | M007/S02 | M007/S01, M007/S03, M007/S04 | All four M007 slices delivered their components: S01 (PtyChatParser + CompletionSignal), S02 (Chat Mode view, ChatPane, ChatBubble, sidebar nav), S03 (TUI prompt intercept UI — select/text/password), S04 (ChatModeHeader toolbar, ActionPanel with animated lifecycle, session DELETE cleanup). npm run build:web-host exits 0. Browser end-to-end verified: panel slides in with accent color, secondary PTY session established, X close fires DELETE, main session unaffected. Completion auto-close (1500ms after CompletionSignal) wired; live runtime UAT required to fully exercise. |
+| R114 | quality-attribute | active | M008/S03 | none | unmapped |
+| R115 | quality-attribute | active | M008/S03 | none | unmapped |
+| R116 | quality-attribute | active | M008/S05 | none | unmapped |
+| R117 | core-capability | active | M008/S02 | none | unmapped |
+| R118 | core-capability | active | M008/S04 | none | unmapped |
+| R119 | quality-attribute | active | M008/S01 | none | unmapped |
+| R120 | quality-attribute | active | M008/S05 | none | unmapped |
 
 ## Coverage Summary
 
-- Active requirements: 3
-- Mapped to slices: 3
+- Active requirements: 10
+- Mapped to slices: 10
 - Validated: 23 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R100, R101, R102, R103, R104, R105, R106, R107, R108, R109, R110, R113)
 - Unmapped active requirements: 0

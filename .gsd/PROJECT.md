@@ -18,6 +18,8 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 - M001 is complete: assembled route/runtime/browser proof is green, the preserved skin is wired to live state/actions.
 - M002 is complete: browser slash commands dispatch safely, current-project session browse/resume/rename/fork plus settings/auth/Git/shell controls are browser-native, dashboard/sidebar/roadmap/status/recovery surfaces stay fresh through targeted invalidation-driven updates.
 - M003 is complete: all 415 upstream commits (v2.12→v2.22.0) merged, 50 file conflicts resolved, all 30 /gsd subcommands dispatch correctly from the browser (20 surface with real content, 9 passthrough, 1 local help). Dedicated visualizer page with 7 tabs, three diagnostic panels (forensics, doctor, skill-health), combined knowledge/captures page, extended settings surface (model routing, budget, preferences), and 10 remaining command panels — all backed by 14 new API routes using child-process services. Systematic parity audit found 12 gaps (9 intentional scope boundaries, 3 deferred minor items). Test suite green: 1197 unit tests, 27 integration tests, 118 parity contract tests.
+- M007 is complete: Chat Mode — consumer-grade chat interface over GSD PTY sessions for non-technical users. PtyChatParser + ANSI stripping, ChatPane/ChatBubble with react-markdown+shiki, TUI select/text/password prompt intercept UI, ActionPanel with animated lifecycle, secondary PTY session management, completion auto-close, session DELETE cleanup.
+- M008 is in progress: Web polish — projects page redesign, browser update UI, theme defaults and color audit, remote questions settings, dynamic progress bar, terminal text size preference.
 
 ## Architecture / Key Patterns
 
@@ -35,6 +37,8 @@ A user can run `gsd --web`, complete setup, and do the full GSD workflow in a sn
 - Child-process pattern (execFile + resolve-ts.mjs) for calling upstream extension modules from Next.js — Turbopack cannot resolve .js→.ts extension imports
 - Web code only imports from native-git-bridge.ts — never from GSD extension core modules
 - 14 new API routes for upstream feature surfaces (visualizer, forensics, doctor, skill-health, knowledge, captures, settings-data, history, inspect, hooks, export-data, undo, cleanup, steer)
+- Theme system via next-themes with CSS custom properties in oklch color space (globals.css `:root` and `.dark` blocks)
+- Multi-project workspace with ProjectStoreManager maintaining per-project bridge/store instances
 
 ## Capability Contract
 
@@ -48,4 +52,5 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [ ] M004: Web mode documentation and CI/CD integration — Dedicated web mode guide, existing doc updates, and a separate CI job for web host build/tests on Linux and macOS.
 - [ ] M005: Light theme with system-aware toggle — Monochrome light theme, OS preference default, NavRail toggle, persistent choice.
 - [ ] M006: Multi-project workspace — Dev root selection in onboarding, smart project discovery, Projects NavRail tab, multi-bridge registry with background sessions, context-aware launch.
-- [x] M007: Chat Mode — Consumer-grade chat interface over GSD PTY sessions for non-technical users. All four slices complete: S01 (PtyChatParser + ANSI stripping + CompletionSignal), S02 (Chat Mode view, sidebar nav, ChatPane, ChatBubble with react-markdown+shiki), S03 (TUI select/text/password prompt intercept UI), S04 (ChatModeHeader action toolbar, ActionPanel with animated lifecycle, secondary PTY session management, completion auto-close, session DELETE cleanup). R113 validated. `npm run build:web-host` exits 0.
+- [x] M007: Chat Mode — Consumer-grade chat interface over GSD PTY sessions for non-technical users.
+- [ ] M008: Web Polish — Projects page redesign, browser update UI, theme defaults & color audit, remote questions settings, dynamic progress bar, terminal text size.
