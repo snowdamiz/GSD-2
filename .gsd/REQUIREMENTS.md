@@ -360,14 +360,14 @@ This file is the explicit capability and coverage contract for the project.
 
 ### R120 — Terminal text size adjustable in settings (chat + expert split, not footer).
 - Class: quality-attribute
-- Status: active
+- Status: validated
 - Description: A new setting in the web settings panel allows users to adjust terminal text size. The setting applies to chat mode terminals and the expert mode split terminal page, but not the persistent footer terminal at the bottom of most pages.
 - Why it matters: Terminal text size is currently hardcoded to 13px with no user control — an accessibility and comfort gap.
 - Source: user
 - Primary owning slice: M008/S05
 - Supporting slices: none
-- Validation: unmapped
-- Notes: Currently hardcoded `fontSize: 13` in shell-terminal.tsx and `text-sm` in terminal.tsx.
+- Validation: useTerminalFontSize() hook persists in localStorage, TerminalSizePanel in settings provides preset controls (11–16), ShellTerminal accepts fontSize prop threaded through DualTerminal, footer terminal excluded by omission (no fontSize prop), chat mode respects setting. npm run build:web-host passes.
+- Notes: Font size clamped 8–24 with presets 11–16. Cross-component sync via custom event + storage event.
 
 ## Deferred
 
@@ -465,11 +465,11 @@ This file is the explicit capability and coverage contract for the project.
 | R113 | primary-user-loop | validated | M007/S02 | M007/S01, M007/S03, M007/S04 | All four M007 slices delivered their components: S01 (PtyChatParser + CompletionSignal), S02 (Chat Mode view, ChatPane, ChatBubble, sidebar nav), S03 (TUI prompt intercept UI — select/text/password), S04 (ChatModeHeader toolbar, ActionPanel with animated lifecycle, session DELETE cleanup). npm run build:web-host exits 0. Browser end-to-end verified: panel slides in with accent color, secondary PTY session established, X close fires DELETE, main session unaffected. Completion auto-close (1500ms after CompletionSignal) wired; live runtime UAT required to fully exercise. |
 | R114 | quality-attribute | active | M008/S03 | none | unmapped |
 | R115 | quality-attribute | active | M008/S03 | none | unmapped |
-| R116 | quality-attribute | active | M008/S05 | none | unmapped |
+| R116 | quality-attribute | validated | M008/S05 | none | oklch interpolation, build passes, visual test |
 | R117 | core-capability | active | M008/S02 | none | unmapped |
 | R118 | core-capability | active | M008/S04 | none | unmapped |
 | R119 | quality-attribute | validated | M008/S01 | none | npm run build:web-host exits 0. rg "grid grid-cols" returns empty. Visual: list layout, expand/collapse, progress detail. API: /api/projects?detail=true returns progress. Verified 2026-03-18. |
-| R120 | quality-attribute | active | M008/S05 | none | unmapped |
+| R120 | quality-attribute | validated | M008/S05 | none | hook + settings panel, build passes |
 
 ## Coverage Summary
 
@@ -477,3 +477,4 @@ This file is the explicit capability and coverage contract for the project.
 - Mapped to slices: 10
 - Validated: 23 (R001, R002, R003, R004, R005, R006, R007, R008, R009, R010, R011, R100, R101, R102, R103, R104, R105, R106, R107, R108, R109, R110, R113)
 - Unmapped active requirements: 0
+rements: 0

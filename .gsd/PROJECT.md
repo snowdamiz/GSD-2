@@ -53,4 +53,4 @@ See `.gsd/REQUIREMENTS.md` for the explicit capability contract, requirement sta
 - [ ] M005: Light theme with system-aware toggle — Monochrome light theme, OS preference default, NavRail toggle, persistent choice.
 - [ ] M006: Multi-project workspace — Dev root selection in onboarding, smart project discovery, Projects NavRail tab, multi-bridge registry with background sessions, context-aware launch.
 - [x] M007: Chat Mode — Consumer-grade chat interface over GSD PTY sessions for non-technical users.
-- [ ] M008: Web Polish — S01 (projects page), S02 (browser update UI), S03 (theme defaults & color audit) complete; remaining: S04 remote questions settings, S05 progress bar & terminal text size.
+- [x] M008: Web Polish — All 5 slices complete: projects page redesign, browser update UI, theme defaults & color audit, remote questions settings, progress bar dynamics & terminal text size.

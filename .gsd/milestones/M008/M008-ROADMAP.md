@@ -67,7 +67,7 @@ This milestone is complete only when all are true:
 - [x] **S04: Remote Questions Settings** `risk:low` `depends:[]`
   > After this: Slack/Discord/Telegram channel type, channel ID, timeout, and poll interval are configurable from the web settings panel.
 
-- [ ] **S05: Progress Bar Dynamics & Terminal Text Size** `risk:low` `depends:[]`
+- [x] **S05: Progress Bar Dynamics & Terminal Text Size** `risk:low` `depends:[]`
   > After this: Dashboard progress bar transitions red→green by completion percentage; terminal text size is adjustable in settings and applies to chat + expert terminals.
 
 ## Boundary Map
