@@ -48,7 +48,7 @@
   - Verify: `npm run build:web-host` exits 0
   - Done when: GET `/api/update` returns valid JSON with `currentVersion`, `latestVersion`, `updateAvailable`, `updateStatus`; POST returns 202 and spawns child process; concurrent POST returns 409
 
-- [ ] **T02: Build UpdateBanner component and wire into app-shell** `est:30m`
+- [x] **T02: Build UpdateBanner component and wire into app-shell** `est:30m`
   - Why: Creates the user-facing update notification and action UI. Without this, the API exists but users have no way to see or trigger updates from the browser.
   - Files: `web/components/gsd/update-banner.tsx`, `web/components/gsd/app-shell.tsx`
   - Do: Create client component that fetches `GET /api/update` on mount. Conditionally render banner when `updateAvailable=true` showing current and latest version. "Update" button fires `POST /api/update`, then polls GET every 3s while status is `running`. Show success ("restart GSD to use vX.Y.Z") or error feedback inline. Wire into `app-shell.tsx` WorkspaceChrome — render between the header and the workspace-error-banner div.

@@ -61,6 +61,14 @@ The component is a standard React client component using `useState`/`useEffect` 
 - Visual browser check: banner absent when on latest version
 - Visual browser check: update flow shows loading → success/error states
 
+## Observability Impact
+
+- **New UI signal:** UpdateBanner conditionally renders in the workspace chrome — visible to browser users and agents via `data-testid="update-banner"` attribute
+- **Polling behavior:** While `updateStatus === 'running'`, the component polls `GET /api/update` every 3s — observable via network logs
+- **Status transitions surfaced to DOM:** Banner text and state classes change with update status (`idle`, `running`, `success`, `error`) — inspectable via accessibility tree or `browser_find`
+- **Failure visibility:** Error messages from the API `error` field are rendered directly in the banner — visible without opening devtools
+- **Inspection:** `browser_find` with text "Update available" or `browser_assert` with `selector_visible` on `[data-testid="update-banner"]` confirms banner presence
+
 ## Inputs
 
 - `web/app/api/update/route.ts` — T01 output; provides GET/POST `/api/update` endpoints
