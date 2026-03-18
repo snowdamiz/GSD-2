@@ -31,6 +31,7 @@ import {
 } from "@/lib/gsd-workspace-store"
 import { ChatMode } from "@/components/gsd/chat-mode"
 import { ScopeBadge } from "@/components/gsd/scope-badge"
+import { Badge } from "@/components/ui/badge"
 import { ProjectsView } from "@/components/gsd/projects-view"
 import { UpdateBanner } from "@/components/gsd/update-banner"
 import { InstallPromptBanner } from "@/components/gsd/install-prompt-banner"
@@ -258,6 +259,9 @@ function WorkspaceChrome() {
               height={16}
               className="shrink-0 h-4 w-auto hidden dark:block"
             />
+            <Badge variant="outline" className="text-[10px] rounded-full border-foreground/15 bg-accent/40 text-muted-foreground font-normal">
+              beta
+            </Badge>
           </div>
           <span className="text-2xl font-thin text-muted-foreground/50 leading-none select-none">/</span>
           <span className="text-sm text-muted-foreground" data-testid="workspace-project-cwd" title={projectPath ?? undefined}>
