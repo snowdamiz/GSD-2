@@ -61,7 +61,7 @@ This milestone is complete only when all are true:
 - [x] **S02: Browser Update UI** `risk:medium` `depends:[]`
   > After this: When a new GSD version is available, a banner appears in the browser; clicking "Update" triggers async npm install and shows progress.
 
-- [ ] **S03: Theme Defaults & Light Mode Color Audit** `risk:medium` `depends:[]`
+- [x] **S03: Theme Defaults & Light Mode Color Audit** `risk:medium` `depends:[]`
   > After this: Dark mode is the default; every non-monochrome color in light mode uses semantic design tokens consistently — verified by grep scan.
 
 - [ ] **S04: Remote Questions Settings** `risk:low` `depends:[]`
