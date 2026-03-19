@@ -118,7 +118,7 @@ import {
   parseSliceBranch,
   setActiveMilestoneId,
 } from "./worktree.js";
-import { GitServiceImpl, type TaskCommitContext } from "./git-service.js";
+import { createGitService, type TaskCommitContext } from "./git-service.js";
 import { getPriorSliceCompletionBlocker } from "./dispatch-guard.js";
 import { formatGitError } from "./git-self-heal.js";
 import {
@@ -204,8 +204,7 @@ import type { CompletedUnit, CurrentUnit, UnitRouting, StartModel, PendingVerifi
 // ─────────────────────────────────────────────────────────────────────────────
 const s = new AutoSession();
 
-/** Throttle STATE.md rebuilds — at most once per 30 seconds */
-const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
+import { STATE_REBUILD_MIN_INTERVAL_MS } from "./auto-constants.js";
 
 export function shouldUseWorktreeIsolation(): boolean {
   const prefs = loadEffectiveGSDPreferences()?.preferences?.git;
@@ -462,7 +461,7 @@ export async function stopAuto(ctx?: ExtensionContext, pi?: ExtensionAPI, reason
       try { autoCommitCurrentBranch(s.basePath, "stop", s.currentMilestoneId); } catch (e) { debugLog("stop-auto-commit-failed", { error: e instanceof Error ? e.message : String(e) }); }
       teardownAutoWorktree(s.originalBasePath, s.currentMilestoneId, { preserveBranch: true });
       s.basePath = s.originalBasePath;
-      s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+      s.gitService = createGitService(s.basePath);
       ctx?.ui.notify("Exited auto-worktree (branch preserved for resume).", "info");
     } catch (err) {
       ctx?.ui.notify(
@@ -626,12 +625,12 @@ export async function startAuto(
         if (existingWtPath) {
           const wtPath = enterAutoWorktree(s.originalBasePath, s.currentMilestoneId);
           s.basePath = wtPath;
-          s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          s.gitService = createGitService(s.basePath);
           ctx.ui.notify(`Re-entered auto-worktree at ${wtPath}`, "info");
         } else {
           const wtPath = createAutoWorktree(s.originalBasePath, s.currentMilestoneId);
           s.basePath = wtPath;
-          s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          s.gitService = createGitService(s.basePath);
           ctx.ui.notify(`Recreated auto-worktree at ${wtPath}`, "info");
         }
       } catch (err) {
@@ -834,6 +833,9 @@ export async function handleAgentEnd(
     // permanently stalled with no unit running and no watchdog set.
     if (s.pendingAgentEndRetry) {
       s.pendingAgentEndRetry = false;
+      // Clear gap watchdog from the previous cycle to prevent concurrent
+      // dispatch when the deferred handleAgentEnd calls dispatchNextUnit (#1272).
+      clearDispatchGapWatchdog();
       setImmediate(() => {
         handleAgentEnd(ctx, pi).catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
@@ -976,8 +978,12 @@ async function dispatchNextUnit(
     return;
   }
 
-  // Reentrancy guard
-  if (s.dispatching && s.skipDepth === 0) {
+  // Reentrancy guard — unconditional to prevent concurrent dispatch from
+  // gap watchdog or pendingAgentEndRetry during skip chains (#1272).
+  // Previously the guard was bypassed when skipDepth > 0, but the recursive
+  // skip chain's inner finally block resets s.dispatching = false before the
+  // outer call's finally runs, opening a window for concurrent entry.
+  if (s.dispatching) {
     debugLog("dispatchNextUnit reentrancy guard — another dispatch in progress, bailing");
     return;
   }
@@ -1124,7 +1130,7 @@ async function dispatchNextUnit(
       }
 
       s.basePath = s.originalBasePath;
-      s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+      s.gitService = createGitService(s.basePath);
       invalidateAllCaches();
 
       state = await deriveState(s.basePath);
@@ -1136,7 +1142,7 @@ async function dispatchNextUnit(
         try {
           const wtPath = createAutoWorktree(s.basePath, mid);
           s.basePath = wtPath;
-          s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+          s.gitService = createGitService(s.basePath);
           ctx.ui.notify(`Created auto-worktree for ${mid} at ${wtPath}`, "info");
         } catch (err) {
           ctx.ui.notify(
@@ -1176,7 +1182,7 @@ async function dispatchNextUnit(
             const roadmapContent = readFileSync(roadmapPath, "utf-8");
             const mergeResult = mergeMilestoneToMain(s.originalBasePath, s.currentMilestoneId, roadmapContent);
             s.basePath = s.originalBasePath;
-            s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+            s.gitService = createGitService(s.basePath);
             ctx.ui.notify(
               `Milestone ${ s.currentMilestoneId } merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
               "info",
@@ -1201,7 +1207,7 @@ async function dispatchNextUnit(
             if (roadmapPath) {
               const roadmapContent = readFileSync(roadmapPath, "utf-8");
               const mergeResult = mergeMilestoneToMain(s.basePath, s.currentMilestoneId, roadmapContent);
-              s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+              s.gitService = createGitService(s.basePath);
               ctx.ui.notify(
                 `Milestone ${ s.currentMilestoneId } merged (branch mode).${mergeResult.pushed ? " Pushed to remote." : ""}`,
                 "info",
@@ -1279,7 +1285,7 @@ async function dispatchNextUnit(
         const roadmapContent = readFileSync(roadmapPath, "utf-8");
         const mergeResult = mergeMilestoneToMain(s.originalBasePath, s.currentMilestoneId, roadmapContent);
         s.basePath = s.originalBasePath;
-        s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+        s.gitService = createGitService(s.basePath);
         ctx.ui.notify(
           `Milestone ${ s.currentMilestoneId } merged to main.${mergeResult.pushed ? " Pushed to remote." : ""}`,
           "info",
@@ -1303,7 +1309,7 @@ async function dispatchNextUnit(
           if (roadmapPath) {
             const roadmapContent = readFileSync(roadmapPath, "utf-8");
             const mergeResult = mergeMilestoneToMain(s.basePath, s.currentMilestoneId, roadmapContent);
-            s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+            s.gitService = createGitService(s.basePath);
             ctx.ui.notify(
               `Milestone ${ s.currentMilestoneId } merged (branch mode).${mergeResult.pushed ? " Pushed to remote." : ""}`,
               "info",
@@ -1449,15 +1455,18 @@ async function dispatchNextUnit(
   }
 
   if (dispatchResult.action !== "dispatch") {
-    await new Promise(r => setImmediate(r));
-    await dispatchNextUnit(ctx, pi);
+    // Defer re-dispatch to next microtask so s.dispatching is released first,
+    // preventing reentrancy guard bypass during concurrent entry (#1272).
+    setImmediate(() => dispatchNextUnit(ctx, pi).catch(err => {
+      ctx.ui.notify(`Deferred dispatch failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      pauseAuto(ctx, pi).catch(() => {});
+    }));
     return;
   }
 
   unitType = dispatchResult.unitType;
   unitId = dispatchResult.unitId;
   prompt = dispatchResult.prompt;
-  let pauseAfterUatDispatch = dispatchResult.pauseAfterDispatch ?? false;
 
   // ── Pre-dispatch hooks ──
   const preDispatchResult = runPreDispatchHooks(unitType, unitId, prompt, s.basePath);
@@ -1469,8 +1478,10 @@ async function dispatchNextUnit(
   }
   if (preDispatchResult.action === "skip") {
     ctx.ui.notify(`Skipping ${unitType} ${unitId} (pre-dispatch hook).`, "info");
-    await new Promise(r => setImmediate(r));
-    await dispatchNextUnit(ctx, pi);
+    setImmediate(() => dispatchNextUnit(ctx, pi).catch(err => {
+      ctx.ui.notify(`Deferred dispatch failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      pauseAuto(ctx, pi).catch(() => {});
+    }));
     return;
   }
   if (preDispatchResult.action === "replace") {
@@ -1501,9 +1512,16 @@ async function dispatchNextUnit(
     if (idempotencyResult.reason === "completed" || idempotencyResult.reason === "fallback-persisted" || idempotencyResult.reason === "phantom-loop-cleared" || idempotencyResult.reason === "evicted") {
       if (!s.active) return;
       s.skipDepth++;
-      await new Promise(r => setTimeout(r, idempotencyResult.reason === "phantom-loop-cleared" ? 50 : 150));
-      await dispatchNextUnit(ctx, pi);
-      s.skipDepth = Math.max(0, s.skipDepth - 1);
+      const skipDelay = idempotencyResult.reason === "phantom-loop-cleared" ? 50 : 150;
+      // Defer re-dispatch so s.dispatching is released first (#1272).
+      setTimeout(() => {
+        dispatchNextUnit(ctx, pi).catch(err => {
+          ctx.ui.notify(`Deferred skip-dispatch failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+          pauseAuto(ctx, pi).catch(() => {});
+        }).finally(() => {
+          s.skipDepth = Math.max(0, s.skipDepth - 1);
+        });
+      }, skipDelay);
       return;
     }
   } else if (idempotencyResult.action === "stop") {
@@ -1534,8 +1552,11 @@ async function dispatchNextUnit(
     return;
   }
   if (stuckResult.action === "recovered" && stuckResult.dispatchAgain) {
-    await new Promise(r => setImmediate(r));
-    await dispatchNextUnit(ctx, pi);
+    // Defer re-dispatch so s.dispatching is released first (#1272).
+    setImmediate(() => dispatchNextUnit(ctx, pi).catch(err => {
+      ctx.ui.notify(`Deferred recovery-dispatch failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+      pauseAuto(ctx, pi).catch(() => {});
+    }));
     return;
   }
 
@@ -1712,13 +1733,6 @@ async function dispatchNextUnit(
     { triggerTurn: true },
   );
 
-  if (pauseAfterUatDispatch) {
-    ctx.ui.notify(
-      "UAT requires human execution. Auto-mode will pause after this unit writes the result file.",
-      "info",
-    );
-    await pauseAuto(ctx, pi);
-  }
   } finally {
     s.dispatching = false;
   }
@@ -1787,6 +1801,15 @@ export {
  */
 export function _getUnitConsecutiveSkips(): Map<string, number> { return s.unitConsecutiveSkips; }
 export function _resetUnitConsecutiveSkips(): void { s.unitConsecutiveSkips.clear(); }
+
+/**
+ * Test-only: expose dispatching / skipDepth state for reentrancy guard tests.
+ * Not part of the public API.
+ */
+export function _getDispatching(): boolean { return s.dispatching; }
+export function _setDispatching(v: boolean): void { s.dispatching = v; }
+export function _getSkipDepth(): number { return s.skipDepth; }
+export function _setSkipDepth(v: number): void { s.skipDepth = v; }
 
 /**
  * Dispatch a hook unit directly, bypassing normal pre-dispatch hooks.
@@ -1874,8 +1897,6 @@ export async function dispatchHookUnit(
   ctx.ui.setStatus("gsd-auto", s.stepMode ? "next" : "auto");
   ctx.ui.notify(`Running post-unit hook: ${hookName}`, "info");
 
-  console.log(`[dispatchHookUnit] Sending prompt of length ${hookPrompt.length}`);
-  console.log(`[dispatchHookUnit] Prompt preview: ${hookPrompt.substring(0, 200)}...`);
   pi.sendMessage(
     { customType: "gsd-auto", content: hookPrompt, display: true },
     { triggerTurn: true },

@@ -60,9 +60,31 @@ import {
   hideFooter,
 } from "./auto-dashboard.js";
 import { join } from "node:path";
+import { STATE_REBUILD_MIN_INTERVAL_MS } from "./auto-constants.js";
 
-/** Throttle STATE.md rebuilds — at most once per 30 seconds */
-const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;
+/**
+ * Initialize a unit dispatch: stamp the current time, set `s.currentUnit`,
+ * and persist the initial runtime record. Returns `startedAt` for callers
+ * that need the timestamp.
+ */
+function dispatchUnit(
+  s: AutoSession,
+  basePath: string,
+  unitType: string,
+  unitId: string,
+): number {
+  const startedAt = Date.now();
+  s.currentUnit = { type: unitType, id: unitId, startedAt };
+  writeUnitRuntimeRecord(basePath, unitType, unitId, startedAt, {
+    phase: "dispatched",
+    wrapupWarningSent: false,
+    timeoutAt: null,
+    lastProgressAt: startedAt,
+    progressCount: 0,
+    lastProgressKind: "dispatch",
+  });
+  return startedAt;
+}
 
 export interface PostUnitContext {
   s: AutoSession;
@@ -364,19 +386,10 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
   if (s.currentUnit && !s.stepMode) {
     const hookUnit = checkPostUnitHooks(s.currentUnit.type, s.currentUnit.id, s.basePath);
     if (hookUnit) {
-      const hookStartedAt = Date.now();
       if (s.currentUnit) {
         await closeoutUnit(ctx, s.basePath, s.currentUnit.type, s.currentUnit.id, s.currentUnit.startedAt, buildSnapshotOpts(s.currentUnit.type, s.currentUnit.id));
       }
-      s.currentUnit = { type: hookUnit.unitType, id: hookUnit.unitId, startedAt: hookStartedAt };
-      writeUnitRuntimeRecord(s.basePath, hookUnit.unitType, hookUnit.unitId, hookStartedAt, {
-        phase: "dispatched",
-        wrapupWarningSent: false,
-        timeoutAt: null,
-        lastProgressAt: hookStartedAt,
-        progressCount: 0,
-        lastProgressKind: "dispatch",
-      });
+      dispatchUnit(s, s.basePath, hookUnit.unitType, hookUnit.unitId);
 
       const state = await deriveState(s.basePath);
       updateProgressWidget(ctx, hookUnit.unitType, hookUnit.unitId, state);
@@ -498,16 +511,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
             const triageUnitType = "triage-captures";
             const triageUnitId = `${mid}/${sid}/triage`;
-            const triageStartedAt = Date.now();
-            s.currentUnit = { type: triageUnitType, id: triageUnitId, startedAt: triageStartedAt };
-            writeUnitRuntimeRecord(s.basePath, triageUnitType, triageUnitId, triageStartedAt, {
-              phase: "dispatched",
-              wrapupWarningSent: false,
-              timeoutAt: null,
-              lastProgressAt: triageStartedAt,
-              progressCount: 0,
-              lastProgressKind: "dispatch",
-            });
+            dispatchUnit(s, s.basePath, triageUnitType, triageUnitId);
             updateProgressWidget(ctx, triageUnitType, triageUnitId, state);
 
             const result = await s.cmdCtx!.newSession();
@@ -568,16 +572,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
       const qtUnitType = "quick-task";
       const qtUnitId = `${s.currentMilestoneId}/${capture.id}`;
-      const qtStartedAt = Date.now();
-      s.currentUnit = { type: qtUnitType, id: qtUnitId, startedAt: qtStartedAt };
-      writeUnitRuntimeRecord(s.basePath, qtUnitType, qtUnitId, qtStartedAt, {
-        phase: "dispatched",
-        wrapupWarningSent: false,
-        timeoutAt: null,
-        lastProgressAt: qtStartedAt,
-        progressCount: 0,
-        lastProgressKind: "dispatch",
-      });
+      dispatchUnit(s, s.basePath, qtUnitType, qtUnitId);
       const state = await deriveState(s.basePath);
       updateProgressWidget(ctx, qtUnitType, qtUnitId, state);
 

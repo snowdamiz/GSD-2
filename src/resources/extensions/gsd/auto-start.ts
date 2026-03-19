@@ -38,7 +38,7 @@ import {
 import { selfHealRuntimeRecords } from "./auto-recovery.js";
 import { ensureGitignore, untrackRuntimeFiles } from "./gitignore.js";
 import { nativeIsRepo, nativeInit } from "./native-git-bridge.js";
-import { GitServiceImpl } from "./git-service.js";
+import { createGitService } from "./git-service.js";
 import {
   captureIntegrationBranch,
   detectWorktreeName,
@@ -129,11 +129,13 @@ export async function bootstrapAutoSession(
   }
 
   // Initialize GitServiceImpl
-  s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+  s.gitService = createGitService(s.basePath);
 
-  // Check for crash from previous session (use both old and new lock data)
+  // Check for crash from previous session (use both old and new lock data).
+  // Skip if the lock PID matches this process — acquireSessionLock() writes
+  // to the same auto.lock file before this check, so we'd always false-positive.
   const crashLock = readCrashLock(base);
-  if (crashLock) {
+  if (crashLock && crashLock.pid !== process.pid) {
     // We already hold the session lock, so no concurrent session is running.
     // The crash lock is from a dead process — recover context from it.
     const recoveredMid = crashLock.unitId.split("/")[0];
@@ -330,12 +332,12 @@ export async function bootstrapAutoSession(
       if (existingWtPath) {
         const wtPath = enterAutoWorktree(base, s.currentMilestoneId);
         s.basePath = wtPath;
-        s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+        s.gitService = createGitService(s.basePath);
         ctx.ui.notify(`Entered auto-worktree at ${wtPath}`, "info");
       } else {
         const wtPath = createAutoWorktree(base, s.currentMilestoneId);
         s.basePath = wtPath;
-        s.gitService = new GitServiceImpl(s.basePath, loadEffectiveGSDPreferences()?.preferences?.git ?? {});
+        s.gitService = createGitService(s.basePath);
         ctx.ui.notify(`Created auto-worktree at ${wtPath}`, "info");
       }
       registerSigtermHandler(s.originalBasePath);

@@ -14,12 +14,9 @@ import type { ExtensionAPI, Theme } from "@gsd/pi-coding-agent";
 import { CURSOR_MARKER, Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from "@gsd/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { makeUI, type ProgressStatus } from "./shared/mod.js";
-import { checkExistingEnvKeys } from "./shared/env-key-utils.js";
 import { parseSecretsManifest, formatSecretsManifest } from "./gsd/files.js";
 import { resolveMilestoneFile } from "./gsd/paths.js";
 import type { SecretsManifestEntry } from "./gsd/types.js";
-
-export { checkExistingEnvKeys };
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -102,6 +99,31 @@ async function writeEnvKey(filePath: string, key: string, value: string): Promis
 }
 
 // ─── Exported utilities ───────────────────────────────────────────────────────
+
+/**
+ * Check which keys already exist in the .env file or process.env.
+ * Returns the subset of `keys` that are already set.
+ * Handles ENOENT gracefully (still checks process.env).
+ * Empty-string values count as existing.
+ */
+export async function checkExistingEnvKeys(keys: string[], envFilePath: string): Promise<string[]> {
+	let fileContent = "";
+	try {
+		fileContent = await readFile(envFilePath, "utf8");
+	} catch {
+		// ENOENT or other read error — proceed with empty content
+	}
+
+	const existing: string[] = [];
+	for (const key of keys) {
+		const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+		const regex = new RegExp(`^${escaped}\\s*=`, "m");
+		if (regex.test(fileContent) || key in process.env) {
+			existing.push(key);
+		}
+	}
+	return existing;
+}
 
 /**
  * Detect the write destination based on project files in basePath.

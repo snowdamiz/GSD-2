@@ -19,6 +19,7 @@ export function resolve(specifier, context, nextResolve) {
   }
   // 2. Redirect packages/*/dist/ → packages/*/src/ with .js→.ts for strip-types
   //    Also handles local imports — skip rewrite for dist/ paths that are real compiled artifacts.
+
   else if (specifier.endsWith('.js') && (specifier.startsWith('./') || specifier.startsWith('../'))) {
     if (context.parentURL && context.parentURL.includes('/src/')) {
       if (specifier.includes('/dist/')) {
@@ -43,6 +44,7 @@ export function resolve(specifier, context, nextResolve) {
         specifier = baseUrl.href + ext;
         break;
       }
+
     }
   }
 

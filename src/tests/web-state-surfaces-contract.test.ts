@@ -411,7 +411,7 @@ test("view components read from real data sources (store or API)", () => {
     "web/components/gsd/dashboard.tsx",
     "web/components/gsd/roadmap.tsx",
     "web/components/gsd/activity-view.tsx",
-    "web/components/gsd/dual-terminal.tsx",
+    "web/components/gsd/terminal.tsx",
   ];
 
   // FilesView fetches from /api/files (real endpoint), not the workspace store — that's correct
@@ -481,13 +481,13 @@ test("browser shell renders title overrides, widgets, and editor prefills from s
   assert.match(terminalSource, /setInput\(workspace\.editorTextBuffer\)/, "terminal.tsx must visibly prefill the command input from editorTextBuffer");
 });
 
-test("dual terminal consumes activeToolExecution from store", () => {
-  const dualTerminalPath = resolve(import.meta.dirname, "../../web/components/gsd/dual-terminal.tsx");
-  const source = readFileSync(dualTerminalPath, "utf-8");
+test("terminal consumes activeToolExecution from store", () => {
+  const terminalPath = resolve(import.meta.dirname, "../../web/components/gsd/terminal.tsx");
+  const source = readFileSync(terminalPath, "utf-8");
 
   assert.ok(
     source.includes("activeToolExecution"),
-    "dual-terminal.tsx must reference activeToolExecution for tool execution display",
+    "terminal.tsx must reference activeToolExecution for tool execution display",
   );
 });
 

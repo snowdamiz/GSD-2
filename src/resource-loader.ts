@@ -233,9 +233,7 @@ export function initResources(agentDir: string): void {
   }
 
   // Sync bundled resources — overwrite so updates land on next launch.
-  // Note: env-key-utils.ts lives in extensions/shared/ (not a top-level entry),
-  // so it is structurally excluded from extension discovery and does not need
-  // explicit removal from the destination (unlike the old NON_EXTENSION_FILES approach).
+
   syncResourceDir(bundledExtensionsDir, join(agentDir, 'extensions'))
   syncResourceDir(join(resourcesDir, 'agents'), join(agentDir, 'agents'))
   syncResourceDir(join(resourcesDir, 'skills'), join(agentDir, 'skills'))
