@@ -690,6 +690,12 @@ test("assembled settings controls keep retry visibility and daily-use mutations 
     getOnboardingNeeded: () => false,
   });
 
+  onboarding.configureOnboardingServiceForTests({
+    authStorage: AuthStorage.inMemory({
+      anthropic: { type: "api_key", key: "sk-test-assembled-settings" },
+    } as any),
+  });
+
   try {
     const bootResponse = await bootRoute.GET();
     assert.equal(bootResponse.status, 200);
@@ -768,6 +774,7 @@ test("assembled settings controls keep retry visibility and daily-use mutations 
     );
   } finally {
     await bridge.resetBridgeServiceForTests();
+    onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
   }
 });
@@ -953,6 +960,12 @@ test("assembled slash-command behavior keeps built-ins safe while preserving GSD
     getOnboardingNeeded: () => false,
   });
 
+  onboarding.configureOnboardingServiceForTests({
+    authStorage: AuthStorage.inMemory({
+      anthropic: { type: "api_key", key: "sk-test-assembled-slash" },
+    } as any),
+  });
+
   try {
     async function submitBrowserInput(input: string): Promise<{ outcome: any; status: number | null; body: any; notice: string | null }> {
       const outcome = dispatchBrowserSlashCommand(input);
@@ -1023,6 +1036,7 @@ test("assembled slash-command behavior keeps built-ins safe while preserving GSD
     assert.equal(promptCommand?.message, "/gsd auto", "GSD passthrough commands must stay on the extension prompt path");
   } finally {
     await bridge.resetBridgeServiceForTests();
+    onboarding.resetOnboardingServiceForTests();
     fixture.cleanup();
   }
 });

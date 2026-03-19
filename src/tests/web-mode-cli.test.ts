@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const projectRoot = process.cwd()
@@ -457,9 +457,9 @@ test('registerInstance and readInstanceRegistry round-trip', () => {
 
     const registry = webMode.readInstanceRegistry(registryPath)
     assert.equal(Object.keys(registry).length, 2)
-    assert.equal(registry['/tmp/project-a']?.pid, 1001)
-    assert.equal(registry['/tmp/project-b']?.port, 3001)
-    assert.ok(registry['/tmp/project-a']?.startedAt)
+    assert.equal(registry[resolve('/tmp/project-a')]?.pid, 1001)
+    assert.equal(registry[resolve('/tmp/project-b')]?.port, 3001)
+    assert.ok(registry[resolve('/tmp/project-a')]?.startedAt)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
@@ -476,8 +476,8 @@ test('unregisterInstance removes a single entry', () => {
 
     const registry = webMode.readInstanceRegistry(registryPath)
     assert.equal(Object.keys(registry).length, 1)
-    assert.equal(registry['/tmp/project-a'], undefined)
-    assert.equal(registry['/tmp/project-b']?.pid, 1002)
+    assert.equal(registry[resolve('/tmp/project-a')], undefined)
+    assert.equal(registry[resolve('/tmp/project-b')]?.pid, 1002)
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }

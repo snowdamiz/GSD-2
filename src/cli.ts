@@ -125,7 +125,7 @@ exitIfManagedResourcesAreNewer(agentDir)
 // Early TTY check — must come before heavy initialization to avoid dangling
 // handles that prevent process.exit() from completing promptly.
 const hasSubcommand = cliFlags.messages.length > 0
-if (!process.stdin.isTTY && !isPrintMode && !hasSubcommand && !cliFlags.listModels) {
+if (!process.stdin.isTTY && !isPrintMode && !hasSubcommand && !cliFlags.listModels && !cliFlags.web) {
   process.stderr.write('[gsd] Error: Interactive mode requires a terminal (TTY).\n')
   process.stderr.write('[gsd] Non-interactive alternatives:\n')
   process.stderr.write('[gsd]   gsd --print "your message"     Single-shot prompt\n')
